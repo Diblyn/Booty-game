@@ -1,1083 +1,944 @@
-// ============================================================
-//  BOOTY — Pirate Platform Puzzle (2026 remake)
-//  Pure HTML5 Canvas · Pixel-art style · 10 levels
-// ============================================================
+/* ============================================================
+   BOOTY - a love letter to the 1984 classic
+   Rendering, sound, input and game flow.
+   Physics live in engine.js, holds in levels.js.
+   ============================================================ */
+(function () {
+    'use strict';
 
-const CANVAS = document.getElementById('gameCanvas');
-const CTX = CANVAS.getContext('2d');
-const W = CANVAS.width;   // 800
-const H = CANVAS.height;  // 560
+    const E = window.BootyEngine;
+    const LEVELS = window.BOOTY_LEVELS || BOOTY_LEVELS;
+    const T = E.T, W = 256, H = 192, PLAY_H = E.ROWS * T; // 168
+    const FONT = '"Press Start 2P", monospace';
 
-// Physics
-const GRAVITY    = 0.55;
-const MOVE_SPEED = 4;
-const JUMP_POWER = -11;
-const CLIMB_SPEED = 3;
+    // ---------- canvases ----------
+    const screen = document.getElementById('screen');
+    const sctx = screen.getContext('2d');
+    const buf = document.createElement('canvas');
+    buf.width = W; buf.height = H;
+    const bctx = buf.getContext('2d');
+    let ctx = bctx; // swapped while painting the static layer
+    let SC = 3;
 
-// Palette (retro Spectrum-ish)
-const PAL = {
-    bg:        '#1a0a2e',
-    wood:      '#8b5e34',
-    woodDark:  '#5c3a1e',
-    woodLight: '#b07840',
-    rope:      '#c9a033',
-    metal:     '#6a6a8a',
-    water:     '#1a3a5c',
-    skin:      '#e8b87a',
-    shirt:     '#cc2222',
-    pants:     '#3344aa',
-    hat:       '#222',
-    coin:      '#ffd700',
-    coinDark:  '#cc9900',
-    key:       '#7ec8e3',
-    door:      '#5c3a1e',
-    doorMetal: '#888',
-    exit:      '#4ade80',
-    button:    '#fbbf24',
-    buttonOn:  '#4ade80',
-    danger:    '#cc2222',
-    text:      '#c9a033',
-    white:     '#fff',
-    black:     '#000',
-};
-
-// ============================================================
-//  SPRITE DRAWING (procedural pixel art)
-// ============================================================
-
-function drawPixelRect(x, y, w, h, color) {
-    CTX.fillStyle = color;
-    CTX.fillRect(Math.floor(x), Math.floor(y), w, h);
-}
-
-// Pirate character (16x24 scaled to 28x38)
-function drawPirate(x, y, facing, frame) {
-    const s = 2; // pixel scale
-    const fx = Math.floor(x);
-    const fy = Math.floor(y);
-    const bobY = Math.sin(frame * 0.3) * (Math.abs(facing) === 1 ? 1 : 0);
-
-    // Shadow
-    CTX.fillStyle = 'rgba(0,0,0,0.3)';
-    CTX.fillRect(fx + 2, fy + 36, 24, 4);
-
-    // Legs (animate when moving)
-    const legOffset = Math.sin(frame * 0.5) * 3 * (facing !== 0 ? 1 : 0);
-    drawPixelRect(fx + 6,  fy + 28 + bobY + legOffset, 6*s, 5*s, PAL.pants);
-    drawPixelRect(fx + 16, fy + 28 + bobY - legOffset, 6*s, 5*s, PAL.pants);
-    // Boots
-    drawPixelRect(fx + 4,  fy + 34 + bobY + legOffset, 4*s, 3*s, PAL.woodDark);
-    drawPixelRect(fx + 14, fy + 34 + bobY - legOffset, 4*s, 3*s, PAL.woodDark);
-
-    // Body
-    drawPixelRect(fx + 4, fy + 14 + bobY, 10*s, 7*s, PAL.shirt);
-    // Belt
-    drawPixelRect(fx + 4, fy + 26 + bobY, 10*s, s, PAL.rope);
-
-    // Arms
-    const armSwing = Math.sin(frame * 0.5) * 4 * (facing !== 0 ? 1 : 0);
-    drawPixelRect(fx,      fy + 16 + bobY + armSwing, 2*s, 6*s, PAL.skin);
-    drawPixelRect(fx + 24, fy + 16 + bobY - armSwing, 2*s, 6*s, PAL.skin);
-
-    // Head
-    drawPixelRect(fx + 6, fy + 2 + bobY, 8*s, 6*s, PAL.skin);
-
-    // Hat (tricorn)
-    drawPixelRect(fx + 2, fy - 2 + bobY, 12*s, 3*s, PAL.hat);
-    drawPixelRect(fx + 6, fy - 5 + bobY, 8*s, 3*s, PAL.hat);
-    // Hat trim
-    drawPixelRect(fx + 2, fy + 1 + bobY, 12*s, s, PAL.rope);
-
-    // Eyes
-    const eyeX = facing >= 0 ? 2 : -2;
-    drawPixelRect(fx + 10 + eyeX, fy + 6 + bobY, s, 2*s, PAL.white);
-    drawPixelRect(fx + 16 + eyeX, fy + 6 + bobY, s, 2*s, PAL.white);
-    drawPixelRect(fx + 10 + eyeX + (facing > 0 ? 1 : 0), fy + 7 + bobY, s, s, PAL.black);
-    drawPixelRect(fx + 16 + eyeX + (facing > 0 ? 1 : 0), fy + 7 + bobY, s, s, PAL.black);
-
-    // Eyepatch (right eye)
-    if (facing >= 0) {
-        drawPixelRect(fx + 15 + eyeX, fy + 5 + bobY, 4, 5, PAL.black);
-        // strap
-        CTX.strokeStyle = PAL.black;
-        CTX.lineWidth = 1;
-        CTX.beginPath();
-        CTX.moveTo(fx + 17 + eyeX, fy + 5 + bobY);
-        CTX.lineTo(fx + 20, fy - 1 + bobY);
-        CTX.stroke();
+    function resize() {
+        const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        const availH = window.innerHeight - (touch ? 150 : 16);
+        let fit = Math.min(window.innerWidth / W, availH / H);
+        if (fit >= 1 && !touch) fit = Math.floor(fit);             // crisp integer scale on desktop
+        const dpr = window.devicePixelRatio || 1;
+        SC = Math.min(6, Math.max(2, Math.round(fit * dpr)));     // internal resolution for sharp text
+        screen.width = W * SC; screen.height = H * SC;
+        screen.style.width = Math.floor(W * fit) + 'px'; screen.style.height = Math.floor(H * fit) + 'px';
+        sctx.imageSmoothingEnabled = false;
+        if (touch) document.body.style.alignItems = 'flex-start';
     }
-}
+    window.addEventListener('resize', resize);
+    resize();
 
-// Wooden platform with plank texture
-function drawWoodPlatform(x, y, w, h) {
-    const fx = Math.floor(x);
-    const fy = Math.floor(y);
+    // ---------- palette & sprites ----------
+    const PAL = {
+        k: '#000000', b: '#0000D7', B: '#2020FF', r: '#D70000', R: '#FF2020', m: '#D700D7', M: '#FF50FF',
+        g: '#00D700', G: '#00FF00', c: '#00D7D7', C: '#00FFFF', y: '#D7D700', Y: '#FFFF00',
+        w: '#D7D7D7', W: '#FFFFFF', n: '#7A3E12', N: '#B8672E', s: '#F2B27A', o: '#FF8C00',
+        d: '#505050', l: '#A8A8A8',
+    };
+    const KEYCOL = [null, '#FFFF00', '#00FFFF', '#FF50FF', '#00FF00', '#FFFFFF', '#FF2020', '#FF8C00', '#5080FF', '#C07438'];
 
-    // Main wood
-    CTX.fillStyle = PAL.wood;
-    CTX.fillRect(fx, fy, w, h);
-
-    // Plank lines
-    CTX.strokeStyle = PAL.woodDark;
-    CTX.lineWidth = 1;
-    const plankW = 40;
-    for (let px = fx; px < fx + w; px += plankW) {
-        CTX.beginPath();
-        CTX.moveTo(px, fy);
-        CTX.lineTo(px, fy + h);
-        CTX.stroke();
+    function mk(rows, sub) {
+        const c = document.createElement('canvas');
+        c.width = rows[0].length; c.height = rows.length;
+        const x = c.getContext('2d');
+        rows.forEach((row, j) => {
+            for (let i = 0; i < row.length; i++) {
+                let ch = row[i];
+                if (ch === '.') continue;
+                const col = (sub && sub[ch]) || PAL[ch];
+                if (!col) continue;
+                x.fillStyle = col; x.fillRect(i, j, 1, 1);
+            }
+        });
+        return c;
     }
+    function flip(src) {
+        const c = document.createElement('canvas');
+        c.width = src.width; c.height = src.height;
+        const x = c.getContext('2d');
+        x.translate(src.width, 0); x.scale(-1, 1); x.drawImage(src, 0, 0);
+        return c;
+    }
+    function tint(src, color) {
+        const c = document.createElement('canvas');
+        c.width = src.width; c.height = src.height;
+        const x = c.getContext('2d');
+        x.drawImage(src, 0, 0);
+        x.globalCompositeOperation = 'source-atop';
+        x.fillStyle = color; x.fillRect(0, 0, c.width, c.height);
+        return c;
+    }
+    function pair(rows, sub) { const a = mk(rows, sub); return [a, flip(a)]; } // [right, left]
 
-    // Top highlight
-    CTX.fillStyle = PAL.woodLight;
-    CTX.fillRect(fx, fy, w, 3);
+    const HEAD = ['..RRRR..', '.RRRRRR.', '.nsssss.', '.nsssks.', '..ssss..',
+                  '.WWWWWW.', 'sBBBBBBs', 'sWWWWWWs', 'sBBBBBBs', '.WWWWWW.', '.yyyyyy.'];
+    const LEGS = {
+        stand: ['.bbbbbb.', '.bb..bb.', '.bb..bb.', '.bb..bb.', 'kkk..kkk'],
+        a:     ['.bbbbbb.', 'bbb..bbb', 'bb....bb', 'bb....bb', 'kk....kk'],
+        b:     ['.bbbbbb.', '..bbbb..', '..bbbb..', '...bb...', '..kkkk..'],
+        jump:  ['.bbbbbb.', 'bbb..bbb', 'kk....kk', '........', '........'],
+    };
+    const SPR = {
+        pStand: pair(HEAD.concat(LEGS.stand)),
+        pWalkA: pair(HEAD.concat(LEGS.a)),
+        pWalkB: pair(HEAD.concat(LEGS.b)),
+        pJump:  pair(['s.RRRR.s', 's.RRRR.s'].concat(HEAD.slice(2, 5), ['.WWWWWW.', '.BBBBBB.', '.WWWWWW.', '.BBBBBB.', '.WWWWWW.', '.yyyyyy.'], LEGS.jump)),
+        pClimb: pair(['..RRRR..', '.RRRRRR.', '.nnnnnn.', '.nnnnnn.', '..nnnn..', 'sWWWWWW.', 'sBBBBBBs',
+                      '.WWWWWWs', '.BBBBBB.', '.WWWWWW.', '.yyyyyy.', '.bbbbbb.', '.bb..bb.', '.bb..bb.', '.kk..bb.', '......kk']),
+        pirateA: pair(['.RRRRR..', 'RRRRRRR.', '.ssssss.', '.skksks.', '.kkkkkk.', '..kkkk..', '.rWWWWr.', 'srWWWWrs',
+                       'srWWWWrl', '.rWWWWrl', '.yyyyyyl', '.kkkkkk.', '.kk..kk.', '.kk..kk.', '.kk..nn.', 'kkk...n.']),
+        pirateB: pair(['.RRRRR..', 'RRRRRRR.', '.ssssss.', '.skksks.', '.kkkkkk.', '..kkkk..', '.rWWWWr.', 'srWWWWrs',
+                       'srWWWWrl', '.rWWWWrl', '.yyyyyyl', '.kkkkkk.', '..kkkk..', '..kk.k..', '..kk.n..', '.kkk.n..']),
+        ratA: pair(['........', '........', '........', '........', '.....ll.', '..llllkl', 'dllllllM', 'd.l..l..']),
+        ratB: pair(['........', '........', '........', '........', '.....ll.', '..llllkl', 'dllllllM', 'd..l..l.']),
+        parA: pair(['G.G.....', '.GGG....', '..GGGRR.', '..GGRRkY', '...GGGG.', '...GG...', '..BB....', '.B......']),
+        parB: pair(['........', '........', '..GGGRR.', 'GGGGRRkY', 'GG.GGGG.', '...GG...', '..BB....', '.B......']),
+        booty: [
+            mk(['........', '........', '.nNNNNn.', 'nNNNNNNn', 'nyyyyyyn', 'nNNYYNNn', 'nNNNNNNn', 'nnnnnnnn']),
+            mk(['.YYYYYY.', '.YWYYYY.', '.yYYYYy.', '..yYYy..', '...YY...', '...YY...', '..YYYY..', '.yyyyyy.']),
+            mk(['...nn...', '...GG...', '...GG...', '..GGGG..', '.GWGGGG.', '.GWyyGG.', '.GGyyGG.', '..GGGG..']),
+            mk(['...ny...', '..nnn...', '...n....', '..NNNN..', '.NNYNNN.', '.NYYYNN.', '.NNYNNN.', '..NNNN..']),
+            mk(['........', '..CCCC..', '.CWCCCC.', 'CCWCCCCC', '.CCCCCC.', '..CCCC..', '...CC...', '........']),
+            mk(['........', '........', 'Y..Y..Y.', 'YY.Y.YY.', 'YYYYYYY.', 'YRYCYRY.', 'YYYYYYY.', '........']),
+        ],
+        bomb: mk(['......Y.', '.....R..', '....d...', '..kkkk..', '.kkWdkk.', '.kdkkkk.', '.kkkkkk.', '..kkkk..'], { k: '#202020' }),
+        barrel: mk(['..nnnn..', '.NNNNNN.', '.llllll.', '.NNNNNN.', '.NNNNNN.', '.llllll.', '.NNNNNN.', '..nnnn..']),
+        porthole: mk(['..llll..', '.lCbbbl.', 'lCbbbbbl', 'lbbbbbbl', 'lbbbbbbl', 'lbbbbbBl', '.lbbbBl.', '..llll..']),
+        lantern: mk(['...dd...', '...dd...', '..dddd..', '..dYYd..', '..YooY..', '..dYYd..', '..dddd..', '........']),
+        cannon: mk(['........', '........', '........', '.ddddd..', 'ddddddll', 'ddddddd.', '.nNnnNn.', '..nn.nn.']),
+        flag: mk(['lkkkkkkk', 'lkkWWWkk', 'lkkWkWkk', 'lkkWWWkk', 'lkWkkkWk', 'lkkWkWkk', 'lkWkkkWk', 'l.......']),
+        life: mk(['..RR..', '.RRRR.', '.ssss.', 'WWWWWW', '.BBBB.', '.WWWW.', '.b..b.', '.k..k.']),
+    };
+    const KEY_ROWS = ['........', '........', '........', '.XX.....', 'X..XXXXX', 'X..X.X.X', '.XX.....', '........'];
+    SPR.keys = KEYCOL.map(col => col ? mk(KEY_ROWS, { X: col }) : null);
+    SPR.gold = mk(['..YYY.......', '.Y...Y......', 'Y..W..YYYYYY', 'Y.....YY.Y.Y', '.Y...Y......', '..YYY.......']);
+    SPR.pDead = [tint(SPR.pStand[0], '#FFFFFF'), tint(SPR.pStand[0], '#FF2020')];
 
-    // Wood grain dots
-    CTX.fillStyle = PAL.woodDark;
-    for (let gx = fx + 8; gx < fx + w - 8; gx += plankW) {
-        const gy = fy + h / 2 + Math.sin(gx * 0.5) * 3;
-        CTX.fillRect(gx, gy, 3, 2);
-        CTX.fillRect(gx + 12, gy - 4, 2, 2);
+    const DIG = ['111101101101111', '010110010010111', '111001111100111', '111001111001111', '101101111001001',
+                 '111100111001111', '111100111101111', '111001010010010', '111101111101111', '111101111001111'];
+    function digit(x, y, n, col) {
+        const d = DIG[n]; ctx.fillStyle = col;
+        for (let i = 0; i < 15; i++) if (d[i] === '1') ctx.fillRect(x + (i % 3), y + Math.floor(i / 3), 1, 1);
     }
 
-    // Bottom shadow
-    CTX.fillStyle = 'rgba(0,0,0,0.3)';
-    CTX.fillRect(fx, fy + h - 2, w, 2);
-
-    // Nails at edges
-    CTX.fillStyle = PAL.metal;
-    CTX.fillRect(fx + 3, fy + 4, 3, 3);
-    CTX.fillRect(fx + w - 6, fy + 4, 3, 3);
-}
-
-// Coin collectible
-function drawCoin(x, y, frame) {
-    const pulse = Math.sin(frame * 0.08) * 2;
-    const scaleX = Math.abs(Math.cos(frame * 0.06));
-    const cx = Math.floor(x + 10);
-    const cy = Math.floor(y + 10 + pulse);
-
-    CTX.save();
-    CTX.translate(cx, cy);
-    CTX.scale(scaleX, 1);
-
-    // Outer
-    CTX.fillStyle = PAL.coin;
-    CTX.beginPath();
-    CTX.arc(0, 0, 9, 0, Math.PI * 2);
-    CTX.fill();
-
-    // Inner
-    CTX.fillStyle = PAL.coinDark;
-    CTX.beginPath();
-    CTX.arc(0, 0, 6, 0, Math.PI * 2);
-    CTX.fill();
-
-    // $ sign
-    if (scaleX > 0.3) {
-        CTX.fillStyle = PAL.coin;
-        CTX.font = 'bold 10px monospace';
-        CTX.textAlign = 'center';
-        CTX.textBaseline = 'middle';
-        CTX.fillText('$', 0, 1);
+    // ---------- text (drawn crisp on the scaled screen) ----------
+    let texts = [];
+    function txt(s, x, y, col, opt) {
+        texts.push({ s: String(s), x, y, col: col || '#FFFFFF', align: (opt && opt.align) || 'left', size: (opt && opt.size) || 1, shadow: opt && opt.shadow });
+    }
+    function center(s, y, col, opt) { txt(s, W / 2, y, col, Object.assign({ align: 'center' }, opt || {})); }
+    function flushText() {
+        sctx.textBaseline = 'top';
+        for (const t of texts) {
+            sctx.font = `${8 * t.size * SC}px ${FONT}`;
+            sctx.textAlign = t.align;
+            if (t.shadow) { sctx.fillStyle = t.shadow; sctx.fillText(t.s, (t.x + 1) * SC, (t.y + 1) * SC); }
+            sctx.fillStyle = t.col;
+            sctx.fillText(t.s, t.x * SC, t.y * SC);
+        }
+        texts = [];
+    }
+    function wrap(s, n) {
+        const out = []; let line = '';
+        for (const word of s.split(' ')) {
+            if ((line + ' ' + word).trim().length > n) { out.push(line.trim()); line = word; }
+            else line += ' ' + word;
+        }
+        if (line.trim()) out.push(line.trim());
+        return out;
     }
 
-    CTX.restore();
-}
+    // ---------- audio ----------
+    const Snd = (() => {
+        let ac = null, master = null, musicGain = null, noise = null;
+        let musicOn = true, nextNote = 0, step = 0, timer = null;
+        try { musicOn = localStorage.getItem('booty-music') !== 'off'; } catch (e) {}
 
-// Button/switch
-function drawSwitch(x, y, w, h, pressed) {
-    const fx = Math.floor(x);
-    const fy = Math.floor(y);
+        function init() {
+            if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+            try {
+                ac = new (window.AudioContext || window.webkitAudioContext)();
+                master = ac.createGain(); master.gain.value = 0.5; master.connect(ac.destination);
+                musicGain = ac.createGain(); musicGain.gain.value = musicOn ? 0.5 : 0; musicGain.connect(master);
+                noise = ac.createBuffer(1, ac.sampleRate * 0.5, ac.sampleRate);
+                const d = noise.getChannelData(0);
+                for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+                nextNote = ac.currentTime + 0.1;
+                timer = setInterval(schedule, 25);
+            } catch (e) { ac = null; }
+        }
 
-    // Base plate
-    CTX.fillStyle = PAL.metal;
-    CTX.fillRect(fx, fy + h - 8, w, 8);
+        function tone(f, t, dur, type, vol, f2, dest) {
+            const o = ac.createOscillator(), g = ac.createGain();
+            o.type = type || 'square';
+            o.frequency.setValueAtTime(f, t);
+            if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + dur);
+            g.gain.setValueAtTime(vol, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+            o.connect(g); g.connect(dest || master);
+            o.start(t); o.stop(t + dur + 0.02);
+        }
+        function hiss(t, dur, vol, freq) {
+            const s = ac.createBufferSource(), g = ac.createGain(), f = ac.createBiquadFilter();
+            s.buffer = noise; f.type = 'lowpass'; f.frequency.value = freq || 1200;
+            g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+            s.connect(f); f.connect(g); g.connect(master); s.start(t); s.stop(t + dur);
+        }
+        const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
 
-    // Lever
-    CTX.fillStyle = pressed ? PAL.buttonOn : PAL.button;
-    if (pressed) {
-        CTX.fillRect(fx + 2, fy + h - 14, w - 4, 8);
-    } else {
-        CTX.fillRect(fx + 4, fy, w - 8, h - 6);
-    }
-
-    // Highlight
-    CTX.fillStyle = pressed ? '#6eff9e' : '#ffe066';
-    CTX.fillRect(fx + 6, pressed ? fy + h - 12 : fy + 2, w - 12, 3);
-}
-
-// Door / gate
-function drawGate(x, y, w, h, open) {
-    const fx = Math.floor(x);
-    const fy = Math.floor(y);
-
-    if (open) {
-        // Just the frame
-        CTX.strokeStyle = PAL.doorMetal;
-        CTX.lineWidth = 2;
-        CTX.strokeRect(fx, fy, w, h);
-        CTX.setLineDash([4, 4]);
-        CTX.strokeRect(fx + 2, fy + 2, w - 4, h - 4);
-        CTX.setLineDash([]);
-        return;
-    }
-
-    // Solid door
-    CTX.fillStyle = PAL.door;
-    CTX.fillRect(fx, fy, w, h);
-
-    // Iron bars
-    CTX.fillStyle = PAL.doorMetal;
-    const barSpacing = Math.max(8, Math.floor(w / 4));
-    for (let bx = fx + barSpacing; bx < fx + w; bx += barSpacing) {
-        CTX.fillRect(bx - 1, fy, 3, h);
-    }
-
-    // Horizontal bar
-    CTX.fillRect(fx, fy + Math.floor(h / 3), w, 3);
-    CTX.fillRect(fx, fy + Math.floor(h * 2 / 3), w, 3);
-
-    // Lock
-    CTX.fillStyle = PAL.rope;
-    CTX.fillRect(fx + w / 2 - 4, fy + h / 2 - 4, 8, 8);
-    CTX.fillStyle = PAL.black;
-    CTX.fillRect(fx + w / 2 - 1, fy + h / 2, 3, 4);
-
-    // Frame
-    CTX.strokeStyle = PAL.doorMetal;
-    CTX.lineWidth = 2;
-    CTX.strokeRect(fx, fy, w, h);
-}
-
-// Moving platform (raft style)
-function drawRaft(x, y, w, h) {
-    const fx = Math.floor(x);
-    const fy = Math.floor(y);
-
-    // Logs
-    CTX.fillStyle = PAL.woodLight;
-    CTX.fillRect(fx, fy, w, h);
-
-    // Log separators
-    CTX.fillStyle = PAL.woodDark;
-    for (let ly = fy; ly < fy + h; ly += 8) {
-        CTX.fillRect(fx, ly, w, 1);
-    }
-
-    // Rope binding
-    CTX.fillStyle = PAL.rope;
-    CTX.fillRect(fx + 4, fy, 3, h);
-    CTX.fillRect(fx + w - 7, fy, 3, h);
-
-    // Edge
-    CTX.strokeStyle = PAL.woodDark;
-    CTX.lineWidth = 1;
-    CTX.strokeRect(fx, fy, w, h);
-}
-
-// Exit treasure chest
-function drawTreasureChest(x, y, frame) {
-    const fx = Math.floor(x);
-    const fy = Math.floor(y);
-    const glow = Math.sin(frame * 0.06) * 0.3 + 0.7;
-
-    // Glow
-    const grad = CTX.createRadialGradient(fx + 18, fy + 16, 2, fx + 18, fy + 16, 30);
-    grad.addColorStop(0, `rgba(255, 215, 0, ${glow * 0.5})`);
-    grad.addColorStop(1, 'rgba(255, 215, 0, 0)');
-    CTX.fillStyle = grad;
-    CTX.fillRect(fx - 15, fy - 15, 66, 66);
-
-    // Chest body
-    CTX.fillStyle = '#6b3a1e';
-    CTX.fillRect(fx, fy + 12, 36, 22);
-
-    // Chest lid
-    CTX.fillStyle = '#8b5e34';
-    CTX.beginPath();
-    CTX.moveTo(fx - 2, fy + 14);
-    CTX.lineTo(fx + 38, fy + 14);
-    CTX.lineTo(fx + 36, fy + 2);
-    CTX.quadraticCurveTo(fx + 18, fy - 6, fx, fy + 2);
-    CTX.closePath();
-    CTX.fill();
-
-    // Metal bands
-    CTX.fillStyle = PAL.rope;
-    CTX.fillRect(fx + 2, fy + 14, 32, 3);
-    CTX.fillRect(fx + 2, fy + 26, 32, 3);
-
-    // Lock
-    CTX.fillStyle = PAL.coin;
-    CTX.fillRect(fx + 14, fy + 10, 8, 8);
-    CTX.fillStyle = PAL.black;
-    CTX.fillRect(fx + 17, fy + 14, 3, 4);
-
-    // Sparkles
-    CTX.fillStyle = `rgba(255, 255, 200, ${glow})`;
-    const sparkles = [[fx - 5, fy - 3], [fx + 38, fy + 2], [fx + 18, fy - 8], [fx - 8, fy + 20], [fx + 42, fy + 18]];
-    for (let sp of sparkles) {
-        const sx = sp[0] + Math.sin(frame * 0.03 + sp[1]) * 3;
-        const sy = sp[1] + Math.cos(frame * 0.04 + sp[0]) * 2;
-        CTX.fillRect(sx, sy, 2, 2);
-    }
-}
-
-// Ship background elements
-function drawShipBackground() {
-    // Dark background
-    CTX.fillStyle = PAL.bg;
-    CTX.fillRect(0, 0, W, H);
-
-    // Wooden wall planks (vertical)
-    CTX.fillStyle = '#120820';
-    for (let x = 0; x < W; x += 60) {
-        CTX.fillRect(x, 0, 1, H);
-    }
-
-    // Porthole decorations
-    CTX.strokeStyle = '#2a1a3e';
-    CTX.lineWidth = 2;
-    const portholes = [[100, 60], [350, 40], [600, 70], [750, 50]];
-    for (let [px, py] of portholes) {
-        CTX.beginPath();
-        CTX.arc(px, py, 18, 0, Math.PI * 2);
-        CTX.stroke();
-        // Glass
-        CTX.fillStyle = 'rgba(30, 60, 100, 0.3)';
-        CTX.fill();
-        // Bolts
-        CTX.fillStyle = '#2a1a3e';
-        CTX.fillRect(px - 1, py - 20, 2, 4);
-        CTX.fillRect(px - 1, py + 16, 2, 4);
-        CTX.fillRect(px - 20, py - 1, 4, 2);
-        CTX.fillRect(px + 16, py - 1, 4, 2);
-    }
-
-    // Ropes hanging
-    CTX.strokeStyle = '#2a1a3e';
-    CTX.lineWidth = 2;
-    for (let rx = 50; rx < W; rx += 200) {
-        CTX.beginPath();
-        CTX.moveTo(rx, 0);
-        const sag = 30 + Math.sin(rx * 0.01) * 15;
-        CTX.quadraticCurveTo(rx + 40, sag, rx + 80, 0);
-        CTX.stroke();
-    }
-
-    // Water line at bottom
-    CTX.fillStyle = PAL.water;
-    CTX.fillRect(0, H - 8, W, 8);
-    // Waves
-    CTX.fillStyle = '#2a5a8c';
-    for (let wx = 0; wx < W; wx += 20) {
-        const wy = H - 6 + Math.sin(wx * 0.1 + Date.now() * 0.002) * 2;
-        CTX.fillRect(wx, wy, 12, 2);
-    }
-}
-
-// Ladder
-function drawLadder(x, y, h) {
-    const fx = Math.floor(x);
-    const fy = Math.floor(y);
-
-    // Side rails
-    CTX.fillStyle = PAL.rope;
-    CTX.fillRect(fx, fy, 3, h);
-    CTX.fillRect(fx + 17, fy, 3, h);
-
-    // Rungs
-    CTX.fillStyle = PAL.woodLight;
-    for (let ry = fy + 8; ry < fy + h; ry += 16) {
-        CTX.fillRect(fx + 3, ry, 14, 4);
-        // shadow
-        CTX.fillStyle = PAL.woodDark;
-        CTX.fillRect(fx + 3, ry + 3, 14, 1);
-        CTX.fillStyle = PAL.woodLight;
-    }
-}
-
-
-// ============================================================
-//  GAME OBJECTS
-// ============================================================
-
-class Player {
-    constructor(x, y) {
-        this.x = x; this.y = y;
-        this.width = 28; this.height = 40;
-        this.velX = 0; this.velY = 0;
-        this.canJump = false;
-        this.facing = 1;
-        this.frame = 0;
-        this.onLadder = false;
-    }
-
-    update() {
-        if (game.transitioning || game.over) return;
-        this.frame++;
-
-        const left  = game.keys['ArrowLeft']  || game.keys['a'] || game.keys['A'];
-        const right = game.keys['ArrowRight'] || game.keys['d'] || game.keys['D'];
-        const up    = game.keys['ArrowUp']    || game.keys['w'] || game.keys['W'];
-        const down  = game.keys['ArrowDown']  || game.keys['s'] || game.keys['S'];
-
-        // Check if on a ladder
-        this.onLadder = false;
-        for (let lad of game.ladders) {
-            if (this.x + this.width > lad.x && this.x < lad.x + 20 &&
-                this.y + this.height > lad.y && this.y < lad.y + lad.h) {
-                if (up || down) this.onLadder = true;
+        function play(name) {
+            if (!ac) return;
+            const t = ac.currentTime;
+            switch (name) {
+                case 'step': tone(180, t, 0.03, 'square', 0.03); break;
+                case 'climb': tone(320, t, 0.03, 'triangle', 0.05); break;
+                case 'jump': tone(220, t, 0.18, 'square', 0.08, 660); break;
+                case 'land': tone(120, t, 0.05, 'triangle', 0.08); break;
+                case 'booty': tone(988, t, 0.06, 'square', 0.07); tone(1319, t + 0.06, 0.1, 'square', 0.07); break;
+                case 'key': [523, 659, 784, 1047].forEach((f, i) => tone(f, t + i * 0.05, 0.08, 'square', 0.07)); break;
+                case 'door': tone(160, t, 0.15, 'square', 0.1, 80); tone(320, t + 0.12, 0.25, 'triangle', 0.1, 640); break;
+                case 'locked': tone(90, t, 0.08, 'square', 0.06); break;
+                case 'fuse': tone(1800, t, 0.03, 'square', 0.04); break;
+                case 'boom': hiss(t, 0.7, 0.5, 900); tone(90, t, 0.5, 'triangle', 0.3, 30); break;
+                case 'crumble': hiss(t, 0.15, 0.15, 2000); break;
+                case 'die': tone(660, t, 0.6, 'square', 0.1, 60); hiss(t, 0.3, 0.1, 3000); break;
+                case 'open': [392, 523, 659, 784, 1047].forEach((f, i) => tone(f, t + i * 0.07, 0.12, 'square', 0.07)); break;
+                case 'clear': [523, 523, 784, 784, 880, 988, 1047].forEach((f, i) => tone(f, t + i * 0.09, 0.14, 'square', 0.08)); break;
+                case 'life': [784, 988, 1175, 1568].forEach((f, i) => tone(f, t + i * 0.06, 0.1, 'triangle', 0.1)); break;
+                case 'gold': [523, 659, 784, 1047, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, t + i * 0.1, 0.18, 'square', 0.08)); break;
+                case 'tick': tone(1500, t, 0.02, 'square', 0.04); break;
             }
         }
 
-        if (this.onLadder) {
-            this.velY = 0;
-            if (up) this.velY = -CLIMB_SPEED;
-            if (down) this.velY = CLIMB_SPEED;
-            this.velX = 0;
-            if (left) { this.velX = -MOVE_SPEED * 0.5; this.facing = -1; }
-            if (right) { this.velX = MOVE_SPEED * 0.5; this.facing = 1; }
-        } else {
-            this.velX = 0;
-            if (left)  { this.velX = -MOVE_SPEED; this.facing = -1; }
-            if (right) { this.velX =  MOVE_SPEED; this.facing =  1; }
-            this.velY += GRAVITY;
-            if (this.velY > 14) this.velY = 14;
-        }
+        // "What Shall We Do with the Drunken Sailor" (traditional, public domain)
+        const A4 = 69, G4 = 67, F4 = 65, E4 = 64, D4 = 62, C4 = 60, B4 = 71, C5 = 72, D5 = 74;
+        const rhythm = [4, 2, 2, 4, 2, 2, 4, 4, 4, 4];
+        const phrase = (n, tail) => rhythm.map((d, i) => [i < 7 ? n : tail[i - 7], d]);
+        const MEL = [].concat(
+            phrase(A4, [D4, F4, A4]), phrase(G4, [C4, E4, G4]), phrase(A4, [B4, C5, D5]),
+            [[C5, 4], [A4, 4], [G4, 4], [E4, 4], [D4, 8], [0, 8]],
+            [[A4, 8], [A4, 8], [A4, 4], [A4, 4], [D4, 4], [F4, 4]], [[G4, 8], [G4, 8], [G4, 4], [G4, 4], [C4, 4], [E4, 4]],
+            [[A4, 8], [A4, 8], [A4, 4], [A4, 4], [B4, 4], [C5, 4]], [[D5, 4], [C5, 4], [A4, 4], [G4, 4], [E4, 4], [D4, 4], [D4, 8]]
+        );
+        const BASS = [50, 48, 50, 48, 50, 48, 50, 50, 50, 48, 50, 48, 50, 48, 50, 50];
+        let melIdx = 0, melLeft = 0, bassStep = 0;
+        const SIXTEENTH = 0.11;
 
-        this.x += this.velX;
-        this.y += this.velY;
-
-        // Platform collision
-        this.canJump = false;
-        for (let p of game.platforms) {
-            if (this.hits(p)) this.resolve(p);
-        }
-        for (let b of game.movers) {
-            if (this.hits(b)) this.resolve(b);
-        }
-        for (let d of game.doors) {
-            if (!d.isOpen && this.hits(d)) this.resolve(d);
-        }
-
-        if (this.onLadder) this.canJump = true;
-
-        // Coins
-        for (let i = game.coins.length - 1; i >= 0; i--) {
-            const c = game.coins[i];
-            if (this.hits(c)) {
-                game.coins.splice(i, 1);
-                game.coinsCollected++;
-                playSound('coin');
+        function schedule() {
+            if (!ac) return;
+            while (nextNote < ac.currentTime + 0.2) {
+                if (melLeft <= 0) {
+                    const [n, d] = MEL[melIdx % MEL.length];
+                    if (n) tone(mtof(n + 12), nextNote, d * SIXTEENTH * 0.9, 'square', 0.035, null, musicGain);
+                    melLeft = d; melIdx++;
+                }
+                if (step % 4 === 0) {
+                    const root = BASS[Math.floor(bassStep / 4) % BASS.length];
+                    const note = (bassStep % 2) ? root + 7 : root;
+                    tone(mtof(note - 12), nextNote, SIXTEENTH * 3, 'triangle', 0.12, null, musicGain);
+                    bassStep++;
+                }
+                melLeft--; step++;
+                nextNote += SIXTEENTH;
             }
         }
-
-        // Buttons
-        for (let btn of game.buttons) {
-            if (!btn.pressed && this.hits(btn)) btn.press();
+        function toggleMusic() {
+            musicOn = !musicOn;
+            try { localStorage.setItem('booty-music', musicOn ? 'on' : 'off'); } catch (e) {}
+            if (musicGain) musicGain.gain.value = musicOn ? 0.5 : 0;
+            return musicOn;
         }
+        return { init, play, toggleMusic, get musicOn() { return musicOn; } };
+    })();
 
-        // Exit
-        if (game.exit && this.hits(game.exit)) {
-            game.levelDone = true;
+    // ---------- input ----------
+    const held = { left: false, right: false, up: false, down: false };
+    let jumpQueued = false;
+    const KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down' };
+
+    window.addEventListener('keydown', e => {
+        Snd.init();
+        if (KEYMAP[e.code]) { held[KEYMAP[e.code]] = true; e.preventDefault(); }
+        if (e.code === 'Space' || e.code === 'KeyZ' || e.code === 'Enter') { e.preventDefault(); if (!e.repeat) press('jump'); }
+        if (e.repeat) return;
+        if (e.code === 'KeyM') { const on = Snd.toggleMusic(); flash(on ? 'MUSIC ON' : 'MUSIC OFF'); }
+        if (e.code === 'KeyP' || e.code === 'Escape') press('pause');
+        if (e.code === 'KeyR') press('restart');
+        if (e.code === 'KeyC') press('continue');
+        if (e.code === 'KeyQ') press('quit');
+    });
+    window.addEventListener('keyup', e => { if (KEYMAP[e.code]) held[KEYMAP[e.code]] = false; });
+    window.addEventListener('blur', () => { for (const k in held) held[k] = false; });
+
+    document.querySelectorAll('#touch button').forEach(b => {
+        const k = b.dataset.k;
+        const on = ev => { ev.preventDefault(); Snd.init(); b.classList.add('on'); if (k === 'jump') press('jump'); else held[k] = true; };
+        const off = ev => { ev.preventDefault(); b.classList.remove('on'); if (k !== 'jump') held[k] = false; };
+        b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off);
+        b.addEventListener('pointercancel', off); b.addEventListener('pointerleave', off);
+    });
+    screen.addEventListener('pointerdown', () => { Snd.init(); if (S.mode !== 'play') press('jump'); });
+
+    // ---------- game state ----------
+    const S = {
+        mode: 'title', room: 0, lives: 5, score: 0, booty: 0, held: 0,
+        w: null, p: null, staticLayer: null, staticDirty: true,
+        roomBooty: 0, roomGot: 0, exitOpen: false, gold: false, goldTime: 0,
+        bombs: [], parts: [], floats: [], touchingKeys: new Set(),
+        snap: null, timer: 0, invuln: 0, shake: 0, deathCause: '', msg: '', msgT: 0,
+        frame: 0, playFrames: 0, nextLife: 30, hi: 0, save: null,
+    };
+    try { S.save = JSON.parse(localStorage.getItem('booty-save') || 'null'); S.hi = +(localStorage.getItem('booty-hi') || 0); } catch (e) {}
+
+    function flash(m, t) { S.msg = m; S.msgT = t || 120; }
+
+    function press(what) {
+        switch (S.mode) {
+            case 'title':
+                if (what === 'jump') newGame(0);
+                else if (what === 'continue' && S.save) newGame(S.save.room, S.save);
+                break;
+            case 'intro':
+                if (what === 'jump' && S.timer > 20) { S.mode = 'play'; S.timer = 0; }
+                break;
+            case 'play':
+                if (what === 'jump') jumpQueued = true;
+                else if (what === 'pause') S.mode = 'paused';
+                else if (what === 'restart') { restartRoom(); flash('HOLD RESTARTED'); }
+                break;
+            case 'paused':
+                if (what === 'pause' || what === 'jump') S.mode = 'play';
+                else if (what === 'quit') S.mode = 'title';
+                break;
+            case 'gameover':
+                if (what === 'jump' && S.timer > 40) { S.lives = 5; S.score = S.snap.score; S.booty = S.snap.booty; enterRoom(S.room); }
+                else if (what === 'quit') S.mode = 'title';
+                break;
+            case 'win':
+                if (what === 'jump' && S.timer > 90) S.mode = 'title';
+                break;
         }
-
-        // Screen edges
-        if (this.x + this.width < 0) this.x = W;
-        if (this.x > W) this.x = -this.width;
-        if (this.y > H + 50) this.respawn();
     }
 
-    hits(r) {
-        return this.x < r.x + r.width && this.x + this.width > r.x &&
-               this.y < r.y + r.height && this.y + this.height > r.y;
+    function newGame(room, save) {
+        S.lives = 5; S.score = save ? save.score : 0; S.booty = save ? save.booty : 0;
+        S.nextLife = (Math.floor(S.booty / 30) + 1) * 30; S.playFrames = 0;
+        enterRoom(room);
     }
 
-    resolve(obj) {
-        const oT = this.y + this.height - obj.y;
-        const oB = obj.y + obj.height - this.y;
-        const oL = this.x + this.width - obj.x;
-        const oR = obj.x + obj.width - this.x;
-        const minX = Math.min(oL, oR);
-        const minY = Math.min(oT, oB);
+    function loadWorld(room) {
+        const def = LEVELS[room];
+        S.w = E.parseLevel(def);
+        S.p = E.newPlayer(S.w);
+        S.roomBooty = S.w.boot; S.roomGot = 0;
+        S.exitOpen = false; S.gold = false; S.goldTime = 0;
+        S.held = 0; S.bombs = []; S.parts = []; S.floats = []; S.touchingKeys = new Set();
+        S.invuln = 60; S.staticDirty = true;
+    }
 
-        if (minY < minX) {
-            if (oT < oB) {
-                this.y = obj.y - this.height;
-                this.velY = 0;
-                this.canJump = true;
+    function enterRoom(room) {
+        S.room = room;
+        S.snap = { score: S.score, booty: S.booty };
+        loadWorld(room);
+        S.mode = 'intro'; S.timer = 0;
+        S.save = { room, score: S.score, booty: S.booty };
+        try { localStorage.setItem('booty-save', JSON.stringify(S.save)); } catch (e) {}
+    }
+
+    function restartRoom() {
+        S.score = S.snap.score; S.booty = S.snap.booty;
+        loadWorld(S.room);
+    }
+
+    // ---------- effects ----------
+    function burst(x, y, cols, n, spd) {
+        for (let i = 0; i < n; i++) {
+            const a = Math.random() * Math.PI * 2, v = (0.3 + Math.random()) * (spd || 1);
+            S.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 0.5, life: 30 + Math.random() * 20, col: cols[i % cols.length] });
+        }
+    }
+    function floater(x, y, s, col) { S.floats.push({ x, y, s, col: col || '#FFFF00', life: 50 }); }
+
+    function addScore(n) {
+        S.score += n;
+        if (S.score > S.hi) { S.hi = S.score; try { localStorage.setItem('booty-hi', String(S.hi)); } catch (e) {} }
+    }
+
+    // ---------- gameplay ----------
+    function killPlayer(cause) {
+        if (S.mode !== 'play') return;
+        S.p.dead = S.p.dead || cause;
+        S.deathCause = cause;
+        S.mode = 'dead'; S.timer = 0; S.shake = 10;
+        Snd.play('die');
+        burst(S.p.x + 4, S.p.y + 8, ['#FFFFFF', '#FF2020', '#FFFF00'], 24, 1.4);
+    }
+
+    function openDoor(n) {
+        const w = S.w;
+        let cx = 0, cy = 0, k = 0;
+        for (let i = 0; i < w.tiles.length; i++) if (w.tiles[i] === String(n)) {
+            w.tiles[i] = '.'; cx += (i % E.COLS) * T + 4; cy += Math.floor(i / E.COLS) * T + 4; k++;
+        }
+        if (k) burst(cx / k, cy / k, [KEYCOL[n], '#FFFFFF'], 20, 1);
+        S.staticDirty = true;
+        S.held = 0;
+        addScore(100); floater(cx / k, cy / k - 8, '100', KEYCOL[n]);
+        Snd.play('door');
+    }
+
+    function collect(c, r, ch) {
+        const w = S.w;
+        E.setTile(w, c, r, '.');
+        S.roomGot++; S.booty++; addScore(50);
+        floater(c * T + 4, r * T - 4, '50');
+        burst(c * T + 4, r * T + 4, ['#FFFF00', '#FFFFFF'], 8, 0.7);
+        Snd.play('booty');
+        if (ch === '!') { S.bombs.push({ x: c * T, y: r * T, t: 60 }); flash('BOOBY TRAP! RUN!', 60); }
+        if (S.booty >= S.nextLife) { S.lives++; S.nextLife += 30; Snd.play('life'); flash('EXTRA LIFE!'); }
+        if (S.roomGot >= S.roomBooty) {
+            if (LEVELS[S.room].finale) {
+                S.gold = true; S.goldTime = 45 * 60;
+                flash('THE GOLDEN KEY HAS APPEARED!', 200);
+                Snd.play('gold');
             } else {
-                this.y = obj.y + obj.height;
-                this.velY = 0;
+                S.exitOpen = true;
+                flash('ALL BOOTY TAKEN! FIND THE EXIT', 160);
+                Snd.play('open');
             }
+        }
+    }
+
+    function handleEvents(ev) {
+        const p = S.p, w = S.w;
+        const nowKeys = new Set(), seen = new Set();
+        for (const e of ev) {
+            switch (e.type) {
+                case 'jump': Snd.play('jump'); break;
+                case 'land': Snd.play('land'); break;
+                case 'crumble': Snd.play('crumble'); burst(e.c * T + 4, e.r * T + 2, [LEVELS[S.room].theme.crumble], 10, 0.6); break;
+                case 'die': killPlayer(e.cause); break;
+                case 'door':
+                    if (S.held === e.n) openDoor(e.n);
+                    else if (S.frame % 20 === 0) { Snd.play('locked'); if (!S.msgT) flash(S.held ? `KEY ${S.held} DOES NOT FIT DOOR ${e.n}` : `DOOR ${e.n} NEEDS KEY ${e.n}`, 70); }
+                    break;
+                case 'touch': {
+                    const id = e.c + ',' + e.r;
+                    if (seen.has(id)) break;
+                    seen.add(id);
+                    const ch = E.tileAt(w, e.c, e.r);
+                    if (ch === '$' || ch === '!') collect(e.c, e.r, ch);
+                    else if (ch >= 'a' && ch <= 'i') {
+                        nowKeys.add(id);
+                        if (!S.touchingKeys.has(id)) {
+                            const n = ch.charCodeAt(0) - 96;
+                            E.setTile(w, e.c, e.r, S.held ? String.fromCharCode(96 + S.held) : '.');
+                            if (S.held) flash(`SWAPPED KEY ${S.held} FOR KEY ${n}`, 80); else flash(`GOT KEY ${n}`, 60);
+                            S.held = n; addScore(10); Snd.play('key');
+                        }
+                    } else if (ch === 'X' && S.exitOpen && S.mode === 'play') roomClear();
+                    else if (ch === 'G' && S.gold && S.mode === 'play') winGame();
+                    break;
+                }
+            }
+        }
+        S.touchingKeys = nowKeys;
+        if (p.walking && p.anim % 12 === 0) Snd.play('step');
+        if (p.mode === 'ladder' && (held.up || held.down) && p.anim % 10 === 0) Snd.play('climb');
+    }
+
+    function roomClear() {
+        S.mode = 'clear'; S.timer = 0;
+        addScore(1000);
+        Snd.play('clear');
+    }
+
+    function winGame() {
+        S.mode = 'win'; S.timer = 0;
+        addScore(5000 + Math.floor(S.goldTime / 60) * 100);
+        Snd.play('gold');
+        try { localStorage.removeItem('booty-save'); } catch (e) {}
+        S.save = null;
+    }
+
+    function updateFx() {
+        for (const q of S.parts) { q.x += q.vx; q.y += q.vy; q.vy += 0.05; q.life--; }
+        S.parts = S.parts.filter(q => q.life > 0);
+        for (const f of S.floats) { f.y -= 0.4; f.life--; }
+        S.floats = S.floats.filter(f => f.life > 0);
+        if (S.shake > 0) S.shake--;
+        if (S.msgT > 0) S.msgT--;
+    }
+
+    function update() {
+        S.frame++;
+        S.timer++;
+        const m = S.mode;
+        if (m === 'play' || m === 'dead' || m === 'clear') {
+            E.stepWorld(S.w, S.p);
+            E.stepEnemies(S.w);
+        }
+        if (m === 'play') {
+            S.playFrames++;
+            const inp = { left: held.left, right: held.right, up: held.up, down: held.down, jump: jumpQueued };
+            jumpQueued = false;
+            const ev = [];
+            E.stepPlayer(S.w, S.p, inp, ev);
+            handleEvents(ev);
+            if (S.mode === 'play') {
+                if (S.invuln > 0) S.invuln--;
+                else if (!S.god) { const e = E.enemyHit(S.w, S.p); if (e) killPlayer(e.kind); }
+            }
+            for (const b of S.bombs) {
+                b.t--;
+                if (b.t > 0 && b.t % 8 === 0) Snd.play('fuse');
+                if (b.t === 0) {
+                    Snd.play('boom'); S.shake = 14;
+                    burst(b.x + 4, b.y + 4, ['#FFFF00', '#FF8C00', '#FF2020', '#FFFFFF'], 40, 1.8);
+                    const dx = (S.p.x + 4) - (b.x + 4), dy = (S.p.y + 8) - (b.y + 4);
+                    if (dx * dx + dy * dy < 16 * 16 && S.mode === 'play' && !S.god) killPlayer('boom');
+                }
+            }
+            S.bombs = S.bombs.filter(b => b.t > -20);
+            if (S.gold && S.mode === 'play') {
+                S.goldTime--;
+                if (S.goldTime % 60 === 0 && S.goldTime <= 10 * 60) Snd.play('tick');
+                if (S.goldTime <= 0) { S.goldTime = 45 * 60; killPlayer('time'); }
+            }
+        } else if (m === 'dead') {
+            if (S.timer > 80) {
+                S.lives--;
+                if (S.lives <= 0) { S.mode = 'gameover'; S.timer = 0; }
+                else { S.p = E.newPlayer(S.w); S.invuln = 120; S.mode = 'play'; S.bombs = []; }
+            }
+        } else if (m === 'clear') {
+            if (S.timer > 150) {
+                if (S.room + 1 < LEVELS.length) enterRoom(S.room + 1);
+                else winGame();
+            }
+        }
+        updateFx();
+    }
+
+    // ---------- drawing: tiles ----------
+    function shade(hex, f) {
+        const n = parseInt(hex.slice(1), 16);
+        const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+        const m = v => Math.max(0, Math.min(255, Math.round(f < 0 ? v * (1 + f) : v + (255 - v) * f)));
+        return `rgb(${m(r)},${m(g)},${m(b)})`;
+    }
+
+    function drawFloorTile(x, y, th, c) {
+        const g = ctx;
+        g.fillStyle = th.floor; g.fillRect(x, y, 8, 4);
+        g.fillStyle = th.floorHi; g.fillRect(x, y, 8, 1);
+        g.fillStyle = th.floorLo; g.fillRect(x, y + 3, 8, 1);
+        if (c % 2 === 0) g.fillRect(x, y + 1, 1, 2);
+        const truss = [[0, 4], [1, 5], [2, 6], [3, 7], [7, 4], [6, 5], [5, 6], [4, 7]];
+        for (const [i, j] of truss) g.fillRect(x + i, y + j, 1, 1);
+    }
+
+    function drawWallTile(x, y, th, c, r) {
+        const g = ctx;
+        g.fillStyle = th.wall; g.fillRect(x, y, 8, 8);
+        g.fillStyle = th.wallHi; g.fillRect(x, y, 8, 1); g.fillRect(x, y + 4, 8, 1);
+        g.fillStyle = 'rgba(0,0,0,0.35)';
+        const o = (r % 2) ? 2 : 6;
+        g.fillRect(x + o, y + 1, 1, 3); g.fillRect(x + ((o + 4) % 8), y + 5, 1, 3);
+        g.fillRect(x, y + 3, 8, 1); g.fillRect(x, y + 7, 8, 1);
+    }
+
+    function drawLadderTile(x, y, th, through) {
+        const g = ctx;
+        g.fillStyle = th.ladder;
+        g.fillRect(x + 1, y, 1, 8); g.fillRect(x + 6, y, 1, 8);
+        g.fillRect(x + 1, y + 2, 6, 1); if (!through) g.fillRect(x + 1, y + 6, 6, 1);
+        g.fillStyle = shade(th.ladder, -0.45);
+        g.fillRect(x + 2, y + 3, 4, 1); if (!through) g.fillRect(x + 2, y + 7, 4, 1);
+    }
+
+    function drawDoorTile(x, y, n, top) {
+        const g = ctx, col = KEYCOL[n];
+        g.fillStyle = '#5A2A0A'; g.fillRect(x, y, 8, 8);
+        g.fillStyle = '#8B4A1C'; g.fillRect(x + 1, y + (top ? 1 : 0), 6, top ? 7 : 7);
+        g.fillStyle = col;
+        g.fillRect(x, y, 1, 8); g.fillRect(x + 7, y, 1, 8);
+        if (top) { g.fillRect(x, y, 8, 1); g.fillStyle = '#000'; g.fillRect(x + 2, y + 2, 5, 7); digit(x + 3, y + 3, n, col); }
+        else { g.fillStyle = '#3A1A04'; g.fillRect(x + 1, y + 3, 6, 1); g.fillStyle = col; g.fillRect(x + 5, y + 1, 1, 1); g.fillRect(x, y + 7, 8, 1); }
+    }
+
+    function buildStatic() {
+        if (!S.staticLayer) { S.staticLayer = document.createElement('canvas'); S.staticLayer.width = W; S.staticLayer.height = PLAY_H; }
+        const th = LEVELS[S.room].theme, w = S.w;
+        const prev = ctx;
+        ctx = S.staticLayer.getContext('2d');
+        ctx.fillStyle = th.bg; ctx.fillRect(0, 0, W, PLAY_H);
+        ctx.fillStyle = th.bg === '#000000' ? '#0C0C1C' : shade(th.bg, -0.3);
+        for (let x = 4; x < W; x += 16) ctx.fillRect(x, 0, 1, PLAY_H);
+        for (let r = 0; r < E.ROWS; r++) for (let c = 0; c < E.COLS; c++) {
+            const ch = E.tileAt(w, c, r), x = c * T, y = r * T;
+            switch (ch) {
+                case '#': drawWallTile(x, y, th, c, r); break;
+                case '=': drawFloorTile(x, y, th, c); break;
+                case 'H': drawLadderTile(x, y, th, false); break;
+                case '+': drawFloorTile(x, y, th, c); drawLadderTile(x, y, th, true); break;
+                case 'o': ctx.drawImage(SPR.barrel, x, y); break;
+                case 'O': ctx.drawImage(SPR.porthole, x, y); break;
+                case 'L': ctx.drawImage(SPR.lantern, x, y); break;
+                case 'K': ctx.drawImage(SPR.cannon, x, y); break;
+                case 'z': ctx.drawImage(SPR.flag, x, y); break;
+                default:
+                    if (ch >= '1' && ch <= '9') drawDoorTile(x, y, +ch, E.tileAt(w, c, r - 1) !== ch);
+            }
+        }
+        ctx = prev;
+        S.staticDirty = false;
+    }
+
+    // ---------- drawing: dynamic ----------
+    function bootySprite(c, r) { return SPR.booty[(c * 7 + r * 13) % SPR.booty.length]; }
+
+    function drawDynamicTiles() {
+        const w = S.w, th = LEVELS[S.room].theme, g = ctx;
+        for (let r = 0; r < E.ROWS; r++) for (let c = 0; c < E.COLS; c++) {
+            const ch = E.tileAt(w, c, r), x = c * T, y = r * T;
+            if (ch === '$' || ch === '!') {
+                g.drawImage(bootySprite(c, r), x, y);
+                if ((S.frame + c * 37 + r * 11) % 140 < 6) { g.fillStyle = '#FFFFFF'; g.fillRect(x + 2 + (c % 4), y + 2, 1, 1); }
+            } else if (ch >= 'a' && ch <= 'i') {
+                const n = ch.charCodeAt(0) - 96, bob = Math.round(Math.sin(S.frame * 0.08 + c) * 1);
+                g.drawImage(SPR.keys[n], x, y + bob);
+                digit(x + 5, y - 1 + bob, n, KEYCOL[n]);
+            } else if (ch === '-') {
+                const k = (w.crumble[r * E.COLS + c] || 0) / E.CRUMBLE_TIME;
+                for (let j = 0; j < 4; j++) for (let i = 0; i < 8; i++) {
+                    const hsh = ((c * 31 + r * 17 + i * 7 + j * 13) * 2654435761 >>> 0) % 1000 / 1000;
+                    if (hsh < k) continue;
+                    g.fillStyle = j === 0 ? '#FFFFFF' : ((i + j + c) % 3 === 0 ? shade(th.crumble, -0.4) : th.crumble);
+                    g.fillRect(x + i, y + j, 1, 1);
+                }
+            } else if (ch === '~') {
+                g.fillStyle = '#0000A8'; g.fillRect(x, y + 3, 8, 5);
+                g.fillStyle = '#00D7D7';
+                for (let i = 0; i < 8; i++) { const h = Math.round(Math.sin((x + i) * 0.5 + S.frame * 0.08) * 1.2); g.fillRect(x + i, y + 3 + h, 1, 1); }
+            } else if (ch === 'X') {
+                if (E.tileAt(w, c, r - 1) === 'X') continue;
+                drawExit(x, y);
+            } else if (ch === 'G' && S.gold) {
+                const glow = 0.5 + Math.sin(S.frame * 0.15) * 0.5;
+                g.fillStyle = `rgba(255,220,0,${0.25 + glow * 0.3})`;
+                g.beginPath(); g.arc(x + 4, y + 4, 9 + glow * 2, 0, Math.PI * 2); g.fill();
+                g.drawImage(SPR.gold, x - 2, y + 1);
+            }
+        }
+    }
+
+    function drawRegrow() {
+        const th = LEVELS[S.room].theme;
+        for (const g of S.w.regrow) {
+            const left = g.at - S.w.t;
+            if (left > 60 || Math.floor(S.frame / 4) % 2) continue;
+            ctx.fillStyle = th.crumble;
+            for (let i = 0; i < 8; i += 2) ctx.fillRect(g.c * T + i, g.r * T, 1, 1);
+        }
+    }
+
+    function drawExit(x, y) {
+        const g = ctx;
+        g.fillStyle = '#202020'; g.fillRect(x - 1, y, 10, 16);
+        if (S.exitOpen) {
+            const f = Math.floor(S.frame / 8) % 2;
+            g.fillStyle = f ? '#FFFF00' : '#FFFFFF';
+            g.fillRect(x - 1, y, 10, 1); g.fillRect(x - 1, y, 1, 16); g.fillRect(x + 8, y, 1, 16);
+            g.fillStyle = '#000'; g.fillRect(x, y + 1, 8, 15);
+            g.fillStyle = f ? '#FFFF00' : '#FF8C00';
+            g.fillRect(x + 3, y + 3, 2, 6); g.fillRect(x + 2, y + 4, 4, 1); g.fillRect(x + 1, y + 5, 6, 1);
         } else {
-            if (oL < oR) this.x = obj.x - this.width;
-            else this.x = obj.x + obj.width;
-            this.velX = 0;
+            g.fillStyle = '#5A5A5A'; g.fillRect(x, y + 1, 8, 15);
+            g.fillStyle = '#A8A8A8';
+            for (let i = 1; i < 8; i += 2) g.fillRect(x + i, y + 1, 1, 15);
+            g.fillStyle = '#FFFF00'; g.fillRect(x + 2, y + 8, 4, 4);
+            g.fillStyle = '#000'; g.fillRect(x + 3, y + 10, 2, 2);
         }
     }
 
-    jump() {
-        if (this.canJump && !game.transitioning && !game.over) {
-            this.velY = JUMP_POWER;
-            this.canJump = false;
-            this.onLadder = false;
-            game.jumps++;
-            playSound('jump');
+    function drawLifts() {
+        const g = ctx;
+        for (const L of S.w.lifts) {
+            const x = Math.round(L.x), y = Math.round(L.y), w = L.w;
+            if (L.dy) {
+                const top = Math.min(L.y0, L.y0 + L.dy) - 6;
+                g.fillStyle = '#C9A033';
+                g.fillRect(x + 1, top, 1, y - top); g.fillRect(x + w - 2, top, 1, y - top);
+                g.fillStyle = '#A8A8A8'; g.fillRect(x, y, w, 4);
+                g.fillStyle = '#FFFFFF'; g.fillRect(x, y, w, 1);
+                g.fillStyle = '#505050'; g.fillRect(x, y + 3, w, 1);
+                for (let i = 2; i < w; i += 4) g.fillRect(x + i, y + 1, 1, 1);
+            } else {
+                g.fillStyle = '#B8672E'; g.fillRect(x, y, w, 4);
+                g.fillStyle = '#E8A060'; g.fillRect(x, y, w, 1);
+                g.fillStyle = '#5A2A0A'; g.fillRect(x, y + 3, w, 1);
+                for (let i = 3; i < w; i += 6) g.fillRect(x + i, y + 1, 1, 2);
+                g.fillStyle = '#C9A033'; g.fillRect(x + 1, y, 1, 4); g.fillRect(x + w - 2, y, 1, 4);
+            }
         }
     }
 
-    respawn() {
-        const lvl = LEVELS[game.currentLevel];
-        this.x = lvl.playerStart.x;
-        this.y = lvl.playerStart.y;
-        this.velX = 0; this.velY = 0;
-        this.canJump = false;
-    }
-
-    draw() {
-        drawPirate(this.x, this.y, this.facing, this.frame);
-    }
-}
-
-class Mover {
-    constructor(x, y, w, h, startX, endX, speed) {
-        this.x = x; this.y = y;
-        this.width = w; this.height = h;
-        this.startX = startX; this.endX = endX;
-        this.speed = speed; this.dir = 1;
-    }
-    update() {
-        this.x += this.speed * this.dir;
-        if (this.x <= this.startX || this.x + this.width >= this.endX + this.width) this.dir *= -1;
-    }
-    draw() { drawRaft(this.x, this.y, this.width, this.height); }
-}
-
-class GateObj {
-    constructor(x, y, w, h) {
-        this.x = x; this.y = y;
-        this.width = w; this.height = h;
-        this.isOpen = false;
-    }
-    open() { this.isOpen = true; }
-    draw() { drawGate(this.x, this.y, this.width, this.height, this.isOpen); }
-}
-
-class SwitchObj {
-    constructor(x, y, door) {
-        this.x = x; this.y = y;
-        this.width = 22; this.height = 22;
-        this.pressed = false; this.door = door;
-    }
-    press() {
-        this.pressed = true;
-        if (this.door) this.door.open();
-        playSound('button');
-    }
-    draw() { drawSwitch(this.x, this.y, this.width, this.height, this.pressed); }
-}
-
-class Coin {
-    constructor(x, y) {
-        this.x = x; this.y = y;
-        this.width = 20; this.height = 20;
-    }
-    draw(frame) { drawCoin(this.x, this.y, frame); }
-}
-
-class ExitObj {
-    constructor(x, y) {
-        this.x = x; this.y = y;
-        this.width = 36; this.height = 34;
-    }
-    draw(frame) { drawTreasureChest(this.x, this.y, frame); }
-}
-
-
-// ============================================================
-//  LEVELS
-// ============================================================
-
-const LEVELS = [
-    {
-        name: 'THE LOWER DECK',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 150, y: 440, w: 140, h: 22 },
-            { x: 400, y: 380, w: 140, h: 22 },
-            { x: 620, y: 320, w: 140, h: 22 },
-        ],
-        coins: [
-            { x: 200, y: 410 }, { x: 440, y: 350 }, { x: 660, y: 290 }
-        ],
-        exit: { x: 700, y: 270 }
-    },
-    {
-        name: 'THE RIGGING',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 80, y: 430, w: 100, h: 22 },
-            { x: 240, y: 370, w: 100, h: 22 },
-            { x: 400, y: 310, w: 100, h: 22 },
-            { x: 560, y: 250, w: 100, h: 22 },
-            { x: 700, y: 190, w: 80, h: 22 },
-        ],
-        coins: [
-            { x: 110, y: 400 }, { x: 270, y: 340 }, { x: 430, y: 280 },
-            { x: 590, y: 220 }, { x: 720, y: 160 }
-        ],
-        exit: { x: 710, y: 146 }
-    },
-    {
-        name: 'CAPTAIN\'S LOCK',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 100, y: 440, w: 120, h: 22 },
-            { x: 300, y: 380, w: 100, h: 22 },
-            { x: 500, y: 440, w: 120, h: 22 },
-            { x: 600, y: 300, w: 120, h: 22 },
-            { x: 700, y: 200, w: 80, h: 22 },
-        ],
-        buttons: [{ x: 530, y: 418, door: 'gate1' }],
-        doors: [{ x: 560, y: 250, w: 30, h: 50, id: 'gate1' }],
-        coins: [
-            { x: 140, y: 410 }, { x: 340, y: 350 }, { x: 640, y: 270 }
-        ],
-        exit: { x: 714, y: 156 }
-    },
-    {
-        name: 'DRIFTING CARGO',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 80, y: 440, w: 120, h: 22 },
-            { x: 600, y: 400, w: 120, h: 22 },
-        ],
-        movers: [
-            { x: 280, y: 380, w: 90, h: 24, sx: 240, ex: 520, spd: 1.5 }
-        ],
-        coins: [
-            { x: 120, y: 410 }, { x: 360, y: 350 }, { x: 640, y: 370 }
-        ],
-        exit: { x: 640, y: 356 }
-    },
-    {
-        name: 'DOUBLE LOCKS',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 60, y: 440, w: 100, h: 22 },
-            { x: 200, y: 370, w: 100, h: 22 },
-            { x: 360, y: 440, w: 100, h: 22 },
-            { x: 520, y: 320, w: 100, h: 22 },
-            { x: 700, y: 240, w: 80, h: 22 },
-        ],
-        buttons: [
-            { x: 230, y: 348, door: 'gate1' },
-            { x: 540, y: 298, door: 'gate2' }
-        ],
-        doors: [
-            { x: 460, y: 270, w: 30, h: 50, id: 'gate1' },
-            { x: 660, y: 190, w: 30, h: 50, id: 'gate2' }
-        ],
-        coins: [
-            { x: 100, y: 410 }, { x: 390, y: 410 }, { x: 550, y: 290 }, { x: 720, y: 210 }
-        ],
-        exit: { x: 710, y: 196 }
-    },
-    {
-        name: 'STORM TIMING',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 60, y: 440, w: 140, h: 22 },
-            { x: 260, y: 380, w: 100, h: 22 },
-            { x: 680, y: 300, w: 100, h: 22 },
-            { x: 680, y: 210, w: 100, h: 22 },
-        ],
-        movers: [
-            { x: 420, y: 330, w: 90, h: 24, sx: 380, ex: 630, spd: 2 }
-        ],
-        buttons: [{ x: 290, y: 358, door: 'gate1' }],
-        doors: [{ x: 660, y: 350, w: 30, h: 80, id: 'gate1' }],
-        ladders: [{ x: 720, y: 220, h: 80 }],
-        coins: [
-            { x: 100, y: 410 }, { x: 300, y: 350 }, { x: 710, y: 270 }, { x: 710, y: 180 }
-        ],
-        exit: { x: 710, y: 166 }
-    },
-    {
-        name: 'HOLD PUZZLE',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 50, y: 440, w: 120, h: 22 },
-            { x: 220, y: 360, w: 100, h: 22 },
-            { x: 400, y: 440, w: 120, h: 22 },
-            { x: 640, y: 280, w: 120, h: 22 },
-        ],
-        movers: [
-            { x: 460, y: 360, w: 90, h: 24, sx: 420, ex: 620, spd: 1.5 }
-        ],
-        buttons: [{ x: 250, y: 338, door: 'gate1' }],
-        doors: [{ x: 560, y: 230, w: 30, h: 50, id: 'gate1' }],
-        coins: [
-            { x: 80, y: 410 }, { x: 260, y: 330 }, { x: 440, y: 410 }, { x: 680, y: 250 }
-        ],
-        exit: { x: 680, y: 236 }
-    },
-    {
-        name: 'CROW\'S NEST',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 80, y: 440, w: 100, h: 22 },
-            { x: 400, y: 280, w: 100, h: 22 },
-        ],
-        movers: [
-            { x: 240, y: 380, w: 80, h: 24, sx: 200, ex: 480, spd: 2 },
-            { x: 540, y: 320, w: 80, h: 24, sx: 480, ex: 720, spd: 2 }
-        ],
-        buttons: [
-            { x: 110, y: 418, door: 'gate1' },
-            { x: 420, y: 258, door: 'gate2' }
-        ],
-        doors: [
-            { x: 350, y: 320, w: 30, h: 60, id: 'gate1' },
-            { x: 540, y: 220, w: 30, h: 60, id: 'gate2' }
-        ],
-        coins: [
-            { x: 120, y: 410 }, { x: 340, y: 350 }, { x: 440, y: 250 }, { x: 600, y: 290 }
-        ],
-        exit: { x: 560, y: 176 }
-    },
-    {
-        name: 'PIRATE GAUNTLET',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 80, y: 440, w: 120, h: 22 },
-        ],
-        movers: [
-            { x: 260, y: 390, w: 80, h: 24, sx: 220, ex: 450, spd: 1.8 },
-            { x: 480, y: 310, w: 80, h: 24, sx: 400, ex: 680, spd: 2 },
-            { x: 340, y: 200, w: 80, h: 24, sx: 260, ex: 540, spd: 2.5 }
-        ],
-        buttons: [{ x: 120, y: 418, door: 'gate1' }],
-        doors: [{ x: 220, y: 280, w: 30, h: 60, id: 'gate1' }],
-        coins: [
-            { x: 130, y: 410 }, { x: 350, y: 360 }, { x: 540, y: 280 }, { x: 400, y: 170 }
-        ],
-        exit: { x: 380, y: 156 }
-    },
-    {
-        name: 'DAVY JONES\' LOCKER',
-        playerStart: { x: 40, y: 440 },
-        platforms: [
-            { x: 0, y: 510, w: 800, h: 50 },
-            { x: 60, y: 440, w: 120, h: 22 },
-        ],
-        movers: [
-            { x: 240, y: 390, w: 70, h: 24, sx: 200, ex: 480, spd: 2.5 },
-            { x: 520, y: 310, w: 70, h: 24, sx: 480, ex: 720, spd: 2 },
-            { x: 300, y: 210, w: 70, h: 24, sx: 250, ex: 500, spd: 3 },
-            { x: 580, y: 150, w: 70, h: 24, sx: 530, ex: 720, spd: 2 }
-        ],
-        buttons: [
-            { x: 100, y: 418, door: 'gate1' },
-            { x: 280, y: 330, door: 'gate2' },
-            { x: 600, y: 250, door: 'gate3' }
-        ],
-        doors: [
-            { x: 380, y: 330, w: 30, h: 60, id: 'gate1' },
-            { x: 520, y: 250, w: 30, h: 60, id: 'gate2' },
-            { x: 340, y: 140, w: 30, h: 60, id: 'gate3' }
-        ],
-        coins: [
-            { x: 100, y: 410 }, { x: 310, y: 360 }, { x: 560, y: 280 },
-            { x: 350, y: 180 }, { x: 620, y: 120 }
-        ],
-        exit: { x: 360, y: 80 }
-    }
-];
-
-
-// ============================================================
-//  AUDIO
-// ============================================================
-
-let audioCtx;
-function initAudio() {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-}
-
-function playSound(type) {
-    if (!audioCtx) return;
-    try {
-        const t = audioCtx.currentTime;
-        const o = audioCtx.createOscillator();
-        const g = audioCtx.createGain();
-        o.connect(g); g.connect(audioCtx.destination);
-
-        switch (type) {
-            case 'jump':
-                o.type = 'square';
-                o.frequency.setValueAtTime(300, t);
-                o.frequency.exponentialRampToValueAtTime(600, t + 0.08);
-                g.gain.setValueAtTime(0.12, t);
-                g.gain.exponentialRampToValueAtTime(0.01, t + 0.1);
-                o.start(t); o.stop(t + 0.1);
-                break;
-            case 'coin':
-                o.type = 'square';
-                o.frequency.setValueAtTime(988, t);
-                o.frequency.setValueAtTime(1319, t + 0.06);
-                g.gain.setValueAtTime(0.1, t);
-                g.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
-                o.start(t); o.stop(t + 0.15);
-                break;
-            case 'button':
-                o.type = 'triangle';
-                o.frequency.setValueAtTime(440, t);
-                o.frequency.exponentialRampToValueAtTime(880, t + 0.1);
-                g.gain.setValueAtTime(0.12, t);
-                g.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
-                o.start(t); o.stop(t + 0.15);
-                break;
-            case 'levelUp':
-                o.type = 'square';
-                o.frequency.setValueAtTime(523, t);
-                o.frequency.setValueAtTime(659, t + 0.1);
-                o.frequency.setValueAtTime(784, t + 0.2);
-                o.frequency.setValueAtTime(1047, t + 0.3);
-                g.gain.setValueAtTime(0.12, t);
-                g.gain.exponentialRampToValueAtTime(0.01, t + 0.45);
-                o.start(t); o.stop(t + 0.45);
-                break;
-        }
-    } catch (e) {}
-}
-
-
-// ============================================================
-//  GAME ENGINE
-// ============================================================
-
-const game = {
-    currentLevel: 0,
-    jumps: 0,
-    coinsCollected: 0,
-    timeElapsed: 0,
-    over: false,
-    levelDone: false,
-    transitioning: false,
-    player: null,
-    platforms: [],
-    buttons: [],
-    doors: [],
-    movers: [],
-    coins: [],
-    ladders: [],
-    exit: null,
-    keys: {},
-    frame: 0,
-};
-
-function loadLevel(n) {
-    const L = LEVELS[n];
-    game.platforms = [];
-    game.buttons = [];
-    game.doors = [];
-    game.movers = [];
-    game.coins = [];
-    game.ladders = [];
-    game.jumps = 0;
-    game.coinsCollected = 0;
-    game.timeElapsed = 0;
-    game.levelDone = false;
-    game.transitioning = false;
-    game.over = false;
-
-    // Platforms
-    for (let p of L.platforms) {
-        game.platforms.push({ x: p.x, y: p.y, width: p.w, height: p.h });
-    }
-
-    // Movers
-    if (L.movers) {
-        for (let m of L.movers) {
-            game.movers.push(new Mover(m.x, m.y, m.w, m.h, m.sx, m.ex, m.spd));
+    function drawEnemies() {
+        const g = ctx;
+        for (const e of S.w.enemies) {
+            const side = e.dir >= 0 ? 0 : 1, f = Math.floor(e.anim / 10) % 2;
+            const x = Math.round(e.x), y = Math.round(e.y);
+            if (e.kind === 'pirate') g.drawImage((f ? SPR.pirateB : SPR.pirateA)[side], x, y);
+            else if (e.kind === 'rat') g.drawImage((f ? SPR.ratB : SPR.ratA)[side], x, y);
+            else g.drawImage((Math.floor(e.anim / 6) % 2 ? SPR.parB : SPR.parA)[side], x, y);
         }
     }
 
-    // Doors
-    const doorMap = {};
-    if (L.doors) {
-        for (let d of L.doors) {
-            const obj = new GateObj(d.x, d.y, d.w, d.h);
-            doorMap[d.id] = obj;
-            game.doors.push(obj);
+    function drawPlayer() {
+        const p = S.p, g = ctx;
+        const x = Math.round(p.x), y = Math.round(p.y), side = p.face >= 0 ? 0 : 1;
+        if (S.mode === 'dead') { g.drawImage(SPR.pDead[Math.floor(S.timer / 4) % 2], x, y); return; }
+        if (S.invuln > 0 && Math.floor(S.invuln / 4) % 2) return;
+        let spr;
+        if (p.mode === 'ladder') spr = SPR.pClimb[Math.floor(p.anim / 6) % 2];
+        else if (p.mode === 'air') spr = SPR.pJump[side];
+        else if (p.walking) spr = [SPR.pWalkA, SPR.pStand, SPR.pWalkB, SPR.pStand][Math.floor(p.anim / 5) % 4][side];
+        else spr = SPR.pStand[side];
+        g.drawImage(spr, x, y);
+    }
+
+    function drawFx() {
+        const g = ctx;
+        for (const b of S.bombs) {
+            if (b.t > 0) { if (Math.floor(b.t / 4) % 2) g.drawImage(SPR.bomb, b.x, b.y); else { g.fillStyle = '#FF2020'; g.fillRect(b.x + 2, b.y + 3, 4, 5); } }
+            else {
+                const k = -b.t / 20;
+                g.fillStyle = `rgba(255,${Math.round(220 - k * 200)},0,${1 - k})`;
+                g.beginPath(); g.arc(b.x + 4, b.y + 4, 6 + k * 12, 0, Math.PI * 2); g.fill();
+            }
         }
+        for (const q of S.parts) { g.fillStyle = q.col; g.fillRect(Math.round(q.x), Math.round(q.y), 1, 1); }
+        for (const f of S.floats) txt(f.s, f.x, f.y, f.col, { align: 'center', shadow: '#000' });
     }
 
-    // Buttons
-    if (L.buttons) {
-        for (let b of L.buttons) {
-            game.buttons.push(new SwitchObj(b.x, b.y, doorMap[b.door]));
-        }
-    }
-
-    // Coins
-    if (L.coins) {
-        for (let c of L.coins) {
-            game.coins.push(new Coin(c.x, c.y));
-        }
-    }
-
-    // Ladders
-    if (L.ladders) {
-        for (let l of L.ladders) {
-            game.ladders.push({ x: l.x, y: l.y, h: l.h });
-        }
-    }
-
-    // Exit
-    game.exit = new ExitObj(L.exit.x, L.exit.y);
-
-    // Player
-    game.player = new Player(L.playerStart.x, L.playerStart.y);
-
-    document.getElementById('levelName').textContent = L.name;
-    updateHUD();
-}
-
-function updateHUD() {
-    document.getElementById('levelNum').textContent = game.currentLevel + 1;
-    document.getElementById('coinCount').textContent = game.coinsCollected;
-    document.getElementById('timeCount').textContent = Math.floor(game.timeElapsed);
-}
-
-function showMessage(text, duration) {
-    const el = document.getElementById('message');
-    el.textContent = text;
-    el.style.display = 'block';
-    if (duration) {
-        setTimeout(() => { el.style.display = 'none'; }, duration);
-    }
-}
-
-
-// ============================================================
-//  MAIN LOOP
-// ============================================================
-
-let lastT = 0;
-
-function loop(ts) {
-    if (!lastT) lastT = ts;
-    const dt = Math.min((ts - lastT) / 1000, 0.05);
-    lastT = ts;
-    game.frame++;
-
-    // Timer
-    if (!game.transitioning && !game.over) {
-        game.timeElapsed += dt;
-    }
-
-    // Update
-    if (!game.transitioning) game.player.update();
-    for (let m of game.movers) m.update();
-
-    // Level complete
-    if (game.levelDone && !game.transitioning) {
-        game.transitioning = true;
-        playSound('levelUp');
-
-        if (game.currentLevel < LEVELS.length - 1) {
-            showMessage('LEVEL COMPLETE!', 1800);
-            setTimeout(() => {
-                game.currentLevel++;
-                loadLevel(game.currentLevel);
-            }, 1800);
+    function drawHUD() {
+        const g = ctx, th = LEVELS[S.room].theme;
+        g.fillStyle = '#000'; g.fillRect(0, PLAY_H, W, H - PLAY_H);
+        g.fillStyle = th.ladder; g.fillRect(0, PLAY_H, W, 1);
+        for (let i = 0; i < Math.min(S.lives, 6); i++) g.drawImage(SPR.life, 3 + i * 8, PLAY_H + 3);
+        if (S.lives > 6) txt('+', 52, PLAY_H + 3, '#FFFFFF');
+        // key slot
+        g.fillStyle = '#202020'; g.fillRect(62, PLAY_H + 2, 22, 10);
+        if (S.held) { g.drawImage(SPR.keys[S.held], 63, PLAY_H + 2); txt(S.held, 74, PLAY_H + 3, KEYCOL[S.held]); }
+        else txt('-', 70, PLAY_H + 3, '#505050');
+        txt('BOOTY', 90, PLAY_H + 3, '#00FFFF');
+        txt(String(S.booty).padStart(3, '0'), 134, PLAY_H + 3, '#FFFFFF');
+        if (S.gold) {
+            const s = Math.ceil(S.goldTime / 60);
+            txt('TIME', 168, PLAY_H + 3, '#FF2020');
+            txt(String(s).padStart(2, '0'), 204, PLAY_H + 3, s <= 10 && Math.floor(S.frame / 15) % 2 ? '#FF2020' : '#FFFF00');
         } else {
-            showMessage('☠ YE CONQUERED ALL LEVELS! ☠');
-            game.over = true;
+            txt('LEFT', 168, PLAY_H + 3, '#FF50FF');
+            txt(String(S.roomBooty - S.roomGot).padStart(2, '0'), 204, PLAY_H + 3, S.exitOpen ? '#00FF00' : '#FFFFFF');
+        }
+        txt(Snd.musicOn ? '♪' : ' ', 244, PLAY_H + 3, '#505050');
+        const name = `${S.room + 1} ${LEVELS[S.room].name}`;
+        txt(name.slice(0, 22), 3, PLAY_H + 14, '#FFFF00');
+        txt(String(S.score).padStart(6, '0'), 253, PLAY_H + 14, '#FFFFFF', { align: 'right' });
+    }
+
+    function drawGame() {
+        if (S.staticDirty) buildStatic();
+        ctx.drawImage(S.staticLayer, 0, 0);
+        drawDynamicTiles();
+        drawRegrow();
+        drawLifts();
+        drawEnemies();
+        drawPlayer();
+        drawFx();
+        drawHUD();
+        if (S.msgT > 0 && S.mode === 'play') {
+            const y = S.p.y > 90 ? 20 : 120;
+            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, y - 3, W, 14);
+            center(S.msg, y, '#FFFF00');
+        }
+        if (S.mode === 'dead') {
+            const why = { pirate: 'A PIRATE GOT YOU!', rat: 'BITTEN BY A RAT!', parrot: 'THE PARROT GOT YOU!', fall: 'YOU FELL TOO FAR!',
+                abyss: 'OVERBOARD!', boom: 'BOOBY TRAP!', time: 'OUT OF TIME!' }[S.deathCause] || 'OUCH!';
+            ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 70, W, 22);
+            center(why, 74, '#FF2020'); center(`${S.lives - 1} LIVES LEFT`, 84, '#FFFFFF');
+        }
+        if (S.mode === 'clear') {
+            ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(0, 60, W, 40);
+            center('HOLD CLEARED!', 66, '#00FF00', { size: 1 });
+            center('+1000', 80, '#FFFF00');
+        }
+        if (S.mode === 'paused') {
+            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, PLAY_H);
+            center('PAUSED', 50, '#FFFF00', { size: 2 });
+            center('P  CONTINUE', 84, '#FFFFFF'); center('R  RESTART HOLD', 96, '#FFFFFF');
+            center('M  MUSIC ON/OFF', 108, '#FFFFFF'); center('Q  QUIT TO TITLE', 120, '#FFFFFF');
+        }
+        if (S.mode === 'gameover') {
+            ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0, 0, W, PLAY_H);
+            center('GAME OVER', 46, '#FF2020', { size: 2 });
+            center(`SCORE ${S.score}`, 80, '#FFFFFF');
+            center('SPACE: TRY THIS HOLD AGAIN', 104, '#FFFF00');
+            center('Q: TITLE SCREEN', 118, '#A8A8A8');
         }
     }
 
-    // === RENDER ===
-    drawShipBackground();
-
-    // Ladders (behind platforms)
-    for (let l of game.ladders) drawLadder(l.x, l.y, l.h);
-
-    // Platforms
-    for (let p of game.platforms) drawWoodPlatform(p.x, p.y, p.width, p.height);
-
-    // Doors
-    for (let d of game.doors) d.draw();
-
-    // Movers
-    for (let m of game.movers) m.draw();
-
-    // Buttons
-    for (let b of game.buttons) b.draw();
-
-    // Coins
-    for (let c of game.coins) c.draw(game.frame);
-
-    // Exit
-    game.exit.draw(game.frame);
-
-    // Player
-    game.player.draw();
-
-    // Transition overlay
-    if (game.transitioning) {
-        CTX.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        CTX.fillRect(0, 0, W, H);
+    // ---------- title / intro / win ----------
+    const BIG = {
+        B: ['11110', '10001', '10001', '11110', '10001', '10001', '11110'],
+        O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
+        T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
+        Y: ['10001', '10001', '01010', '00100', '00100', '00100', '00100'],
+    };
+    function bigWord(word, cx, y, px) {
+        const lw = 5 * px, gap = px, total = word.length * lw + (word.length - 1) * gap;
+        let x = cx - total / 2;
+        for (const ch of word) {
+            const L = BIG[ch];
+            for (let j = 0; j < 7; j++) for (let i = 0; i < 5; i++) if (L[j][i] === '1') {
+                ctx.fillStyle = '#D70000'; ctx.fillRect(x + i * px + 2, y + j * px + 2, px, px);
+                ctx.fillStyle = j < 2 ? '#FFFFFF' : j < 4 ? '#FFFF00' : '#FF8C00';
+                ctx.fillRect(x + i * px, y + j * px, px, px);
+                ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x + i * px, y + j * px + px - 1, px, 1);
+            }
+            x += lw + gap;
+        }
     }
 
-    updateHUD();
-    requestAnimationFrame(loop);
-}
-
-
-// ============================================================
-//  INPUT
-// ============================================================
-
-document.addEventListener('keydown', (e) => {
-    initAudio();
-    game.keys[e.key] = true;
-    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
-        e.preventDefault();
+    function drawShip(x, y, f) {
+        const g = ctx, bob = Math.round(Math.sin(f * 0.05) * 1.5);
+        y += bob;
+        g.fillStyle = '#7A3E12';
+        g.beginPath(); g.moveTo(x - 34, y); g.lineTo(x + 38, y); g.lineTo(x + 30, y + 12); g.lineTo(x - 28, y + 12); g.closePath(); g.fill();
+        g.fillStyle = '#B8672E'; g.fillRect(x - 32, y, 68, 2);
+        g.fillStyle = '#FFFF00'; for (let i = -24; i < 30; i += 10) g.fillRect(x + i, y + 5, 3, 3);
+        g.fillStyle = '#5A2A0A'; g.fillRect(x - 12, y - 40, 2, 40); g.fillRect(x + 12, y - 46, 2, 46);
+        g.fillStyle = '#E8E8E8';
+        g.fillRect(x - 24, y - 34, 26, 12); g.fillRect(x - 22, y - 20, 22, 10);
+        g.fillRect(x + 2, y - 40, 24, 14); g.fillRect(x + 4, y - 24, 20, 12);
+        g.fillStyle = '#000'; g.fillRect(x + 14, y - 54, 10, 7);
+        g.fillStyle = '#FFF'; g.fillRect(x + 17, y - 53, 4, 3); g.fillRect(x + 16, y - 50, 1, 1); g.fillRect(x + 21, y - 50, 1, 1);
     }
-    if (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
-        if (game.player) game.player.jump();
+
+    function drawSea(y, f) {
+        ctx.fillStyle = '#0000A8'; ctx.fillRect(0, y, W, H - y);
+        ctx.fillStyle = '#00D7D7';
+        for (let x = 0; x < W; x += 2) { const h = Math.round(Math.sin(x * 0.12 + f * 0.05) * 1.5); ctx.fillRect(x, y + h, 2, 1); }
+        ctx.fillStyle = '#2020FF';
+        for (let x = 0; x < W; x += 3) { const h = Math.round(Math.sin(x * 0.2 - f * 0.04) * 1.5); ctx.fillRect(x, y + 7 + h, 2, 1); }
     }
-    if (e.key === 'r' || e.key === 'R') {
-        loadLevel(game.currentLevel);
-        document.getElementById('message').style.display = 'none';
+
+    const STARS = Array.from({ length: 40 }, (_, i) => [(i * 73) % W, (i * 37) % 90, i % 3]);
+
+    function drawTitle() {
+        const f = S.frame;
+        ctx.fillStyle = '#000014'; ctx.fillRect(0, 0, W, H);
+        for (const [x, y, k] of STARS) if ((f + x) % 90 > 4) { ctx.fillStyle = k ? '#A8A8A8' : '#FFFFFF'; ctx.fillRect(x, y, 1, 1); }
+        ctx.fillStyle = '#FFFFC0'; ctx.beginPath(); ctx.arc(214, 84, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#000014'; ctx.beginPath(); ctx.arc(219, 81, 9, 0, Math.PI * 2); ctx.fill();
+        bigWord('BOOTY', W / 2, 12, 5);
+        drawShip(64 + Math.sin(f * 0.01) * 10, 108, f);
+        drawSea(118, f);
+        const px = ((f * 0.4) % (W + 40)) - 20;
+        ctx.drawImage(SPR.parA[0], Math.round(px), 66 + Math.round(Math.sin(f * 0.1) * 3));
+        center('125 TREASURES. 10 HOLDS.', 54, '#00FFFF');
+        if (Math.floor(f / 30) % 2) center('PRESS SPACE TO SET SAIL', 132, '#FFFF00');
+        if (S.save && S.save.room > 0) center(`C  CONTINUE FROM HOLD ${S.save.room + 1}`, 144, '#00FF00');
+        center('ARROWS/WASD MOVE + CLIMB', 158, '#A8A8A8');
+        center('SPACE JUMP  P PAUSE  M MUSIC', 168, '#A8A8A8');
+        if (S.hi) center(`HI-SCORE ${String(S.hi).padStart(6, '0')}`, 181, '#FF50FF');
     }
-});
 
-document.addEventListener('keyup', (e) => { game.keys[e.key] = false; });
+    function drawIntro() {
+        const def = LEVELS[S.room], th = def.theme;
+        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = th.floor; ctx.fillRect(8, 8, W - 16, 2); ctx.fillRect(8, H - 10, W - 16, 2);
+        ctx.fillStyle = th.ladder; ctx.fillRect(8, 12, 2, H - 24); ctx.fillRect(W - 10, 12, 2, H - 24);
+        center(`HOLD ${S.room + 1} OF ${LEVELS.length}`, 22, '#00FFFF');
+        center(def.name, 38, '#FFFF00', { size: 2, shadow: '#D70000' });
+        const n = S.w.boot;
+        center(`${n} PIECES OF BOOTY`, 66, '#FFFFFF');
+        for (let i = 0; i < SPR.booty.length; i++) ctx.drawImage(SPR.booty[i], W / 2 - 27 + i * 9, 78);
+        wrap(def.tip, 28).forEach((line, i) => center(line, 98 + i * 11, '#00FF00'));
+        ctx.drawImage(SPR.life, 100, 150);
+        txt(`x ${S.lives}`, 110, 150, '#FFFFFF');
+        txt(String(S.score).padStart(6, '0'), 150, 150, '#FFFF00');
+        if (S.timer > 20 && Math.floor(S.frame / 25) % 2) center('PRESS SPACE', 170, '#FF50FF');
+    }
 
-CANVAS.addEventListener('click', () => { initAudio(); CANVAS.focus(); });
-CANVAS.setAttribute('tabindex', '0');
+    function drawWin() {
+        const f = S.frame;
+        ctx.fillStyle = '#000014'; ctx.fillRect(0, 0, W, H);
+        for (const [x, y] of STARS) { ctx.fillStyle = '#FFFFFF'; ctx.fillRect(x, y, 1, 1); }
+        if (f % 20 === 0) burst(30 + Math.random() * 196, 30 + Math.random() * 60, ['#FFFF00', '#FF50FF', '#00FFFF', '#FF2020', '#00FF00'], 30, 1.5);
+        for (const q of S.parts) { ctx.fillStyle = q.col; ctx.fillRect(Math.round(q.x), Math.round(q.y), 1, 1); }
+        center('YO HO HO!', 24, '#FFFF00', { size: 2, shadow: '#D70000' });
+        center('YOU FOUND THE GOLDEN KEY', 52, '#FFFFFF');
+        center(`BOOTY ${S.booty} / 125`, 72, '#00FFFF');
+        center(`SCORE ${S.score}`, 86, '#FFFF00');
+        const secs = Math.floor(S.playFrames / 60);
+        center(`TIME AT SEA ${Math.floor(secs / 60)}M ${String(secs % 60).padStart(2, '0')}S`, 100, '#00FF00');
+        ctx.drawImage(SPR.gold, W / 2 - 6, 116);
+        drawSea(150, f);
+        if (S.timer > 90 && Math.floor(f / 30) % 2) center('PRESS SPACE', 132, '#FF50FF');
+    }
 
+    // ---------- main loop ----------
+    function render() {
+        ctx = bctx;
+        switch (S.mode) {
+            case 'title': drawTitle(); break;
+            case 'intro': drawIntro(); break;
+            case 'win': drawWin(); break;
+            default: drawGame();
+        }
+        const sx = S.shake ? Math.round((Math.random() - 0.5) * 3) : 0, sy = S.shake ? Math.round((Math.random() - 0.5) * 3) : 0;
+        sctx.fillStyle = '#000'; sctx.fillRect(0, 0, screen.width, screen.height);
+        sctx.drawImage(buf, 0, 0, W, H, sx * SC, sy * SC, W * SC, H * SC);
+        flushText();
+    }
 
-// ============================================================
-//  START
-// ============================================================
+    const STEP = 1000 / 60;
+    let last = performance.now(), acc = 0;
+    function frame(now) {
+        acc += Math.min(now - last, 250);
+        last = now;
+        let steps = 0;
+        while (acc >= STEP && steps < 5) {
+            if (API.manual) { acc = 0; break; }
+            if (S.mode !== 'paused') update(); else S.frame++;
+            acc -= STEP; steps++;
+        }
+        if (steps === 5) acc = 0;
+        render();
+        requestAnimationFrame(frame);
+    }
 
-loadLevel(0);
-showMessage(LEVELS[0].name, 2500);
-requestAnimationFrame(loop);
+    // Test hook used by the automated playthrough (harmless for players)
+    const API = window.BOOTY = {
+        S, enterRoom, newGame, press, held, LEVELS, manual: false,
+        tick(inp) {
+            held.left = !!inp.left; held.right = !!inp.right; held.up = !!inp.up; held.down = !!inp.down;
+            if (inp.jump) jumpQueued = true;
+            update();
+        },
+    };
+
+    const start = () => requestAnimationFrame(t => { last = t; frame(t); });
+    if (document.fonts && document.fonts.load) {
+        Promise.race([document.fonts.load(`8px ${FONT}`), new Promise(r => setTimeout(r, 1500))]).then(start, start);
+    } else start();
+})();

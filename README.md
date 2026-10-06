@@ -1,169 +1,62 @@
-# Booty - Platform Puzzle Game
+# BOOTY (remake web)
 
-A web-based platform puzzle game inspired by Booty (1984). Navigate through 10 progressively challenging levels using precise jumps, buttons, doors, and moving platforms.
+Remake en HTML, CSS y JavaScript puro del clásico de plataformas y puzles **Booty** (Firebird, 1984). Eres un grumete atrapado en un barco pirata: recorre 10 bodegas, recoge las **125 piezas de botín** y encuentra la llave dorada.
 
-## 🎮 Features
+**Jugar:** abre `index.html` en el navegador o publícalo en GitHub Pages (instrucciones abajo).
 
-- **10 Levels** with progressive difficulty
-- **Smooth Physics** with gravity and collision detection
-- **Puzzle Mechanics**:
-  - Buttons & doors
-  - Moving platforms
-  - Platform timing challenges
-  - Multi-button puzzles
-- **Clean Pixel Art** aesthetic
-- **Sound Effects** (Web Audio API)
-- **Mobile-Friendly** controls (keyboard support)
-- **Easy Level Editor** - JSON-based level structure
+## Mecánicas (como el original)
 
-## 🕹️ Controls
+* **Escaleras** que atraviesan las cubiertas para subir y bajar entre pisos.
+* **Salto de arco fijo**: decides la dirección antes de saltar, igual que en 1984.
+* **Llaves y puertas numeradas**: la llave 2 abre la puerta 2. Solo puedes llevar una llave a la vez: si coges otra, la tuya se queda en el suelo.
+* **Ascensores** verticales y **plataformas móviles** horizontales que te transportan por el barco.
+* **Suelos que se desmoronan** si te quedas quieto encima (vuelven a los 5 segundos).
+* **Botín con trampa**: algunas piezas explotan un segundo después de cogerlas. ¡Corre!
+* **Caer demasiado mata** (más de 8 casillas).
+* **Enemigos**: piratas que patrullan, ratas rápidas y el loro del barco.
+* La salida de cada bodega se abre al coger todo su botín.
+* **Final**: en la bodega 10, al coger todo aparece la **llave dorada** y tienes 45 segundos.
+* Vida extra cada 30 piezas, puntuación máxima y partida guardada (continuar desde la última bodega).
 
-| Action | Key |
-|--------|-----|
-| Move Left | `A` or `←` |
-| Move Right | `D` or `→` |
-| Jump | `SPACE` or `W` |
-| Restart Level | `R` or Click Button |
+## Controles
 
-## 📂 Project Structure
+| Tecla | Acción |
+|---|---|
+| Flechas o WASD | Andar, subir y bajar escaleras |
+| Espacio (o Z) | Saltar (con izquierda o derecha pulsada, salto en esa dirección) |
+| P o Esc | Pausa |
+| R | Reiniciar la bodega |
+| M | Música on/off |
+| C | Continuar partida (en la pantalla de título) |
+
+En móvil aparecen botones táctiles.
+
+## Publicar en GitHub Pages
+
+1. Descomprime `booty-game.zip`.
+2. En tu repositorio de GitHub, pulsa **Add file > Upload files**.
+3. Arrastra **todo el contenido** de la carpeta (incluidas las carpetas `fonts` y `tools`) y pulsa **Commit changes**. Si te pregunta, reemplaza los archivos antiguos.
+4. **Settings > Pages**: Source **Deploy from a branch**, Branch **main**, carpeta **/ (root)**. Guarda.
+5. En 1 o 2 minutos el juego estará en `https://TU_USUARIO.github.io/NOMBRE_DEL_REPO/`.
+
+## Estructura
 
 ```
-booty-game/
-├── index.html          # Main HTML file
-├── game.js             # Game engine & logic
-├── README.md           # This file
-└── docs/
-    └── LEVEL_EDITOR.md # Level creation guide
+index.html            página y controles táctiles
+levels.js             las 10 bodegas (mapas ASCII, fáciles de editar)
+engine.js             física: cubiertas, escaleras, ascensores, saltos, enemigos
+game.js               gráficos, sonido, música, pantallas y reglas del juego
+fonts/                fuente Press Start 2P (licencia OFL)
+tools/check-levels.js comprobador automático de niveles (Node.js)
+LEVEL_EDITOR.md       guía para crear bodegas nuevas
 ```
 
-## 🚀 Deploy to GitHub Pages
+## Añadir niveles
 
-1. **Create a GitHub repository** (e.g., `booty-game`)
-2. **Clone the repo locally**:
-   ```bash
-   git clone https://github.com/yourusername/booty-game.git
-   cd booty-game
-   ```
-3. **Add these files**:
-   - `index.html`
-   - `game.js`
-   - `README.md`
+Lee `LEVEL_EDITOR.md`. Cada bodega es un mapa de texto de 32 x 21 caracteres, y `node tools/check-levels.js` comprueba con la física real del juego que se puede completar y que no hay trampas sin salida.
 
-4. **Push to GitHub**:
-   ```bash
-   git add .
-   git commit -m "Initial commit: Booty game"
-   git push origin main
-   ```
+## Créditos
 
-5. **Enable GitHub Pages**:
-   - Go to Settings → Pages
-   - Select "main" branch as source
-   - Save
-
-6. **Access your game**:
-   ```
-   https://yourusername.github.io/booty-game/
-   ```
-
-## 📊 Level System
-
-Levels are defined in the `LEVELS` array in `game.js`. Each level is a JSON object:
-
-```javascript
-{
-    name: 'Level Name',
-    playerStart: { x: 50, y: 450 },
-    platforms: [
-        { x: 0, y: 550, width: 800, height: 50 }
-    ],
-    buttons: [
-        { x: 420, y: 420, targetDoor: 'door1' }
-    ],
-    doors: [
-        { x: 300, y: 350, width: 60, height: 80, id: 'door1' }
-    ],
-    movingBlocks: [
-        { x: 300, y: 300, width: 80, height: 30, startX: 250, endX: 550, speed: 2 }
-    ],
-    exit: { x: 700, y: 350 }
-}
-```
-
-### Adding a New Level
-
-Edit `game.js` and add a new object to the `LEVELS` array:
-
-1. **Player Start Position** - Where the player spawns
-2. **Platforms** - Static platforms (x, y, width, height)
-3. **Moving Blocks** - Platforms that move (x, y, width, height, startX, endX, speed)
-4. **Buttons** - Pressure plates (x, y, targetDoor: 'doorId')
-5. **Doors** - Barriers that open when button pressed (x, y, width, height, id)
-6. **Exit** - Goal position (x, y)
-
-### Level Design Tips
-
-- **Difficulty Progression**: Levels 1-2 basic, 3-5 intermediate, 6-8 advanced, 9-10 expert
-- **Canvas Size**: 800x600 pixels
-- **Timing**: Test with multiple attempts to balance difficulty
-- **Moving Block Speed**: 1-3 range (higher = faster)
-- **Spacing**: Ensure platforms are reachable with JUMP_POWER (-12)
-
-## 🎨 Customization
-
-Edit `game.js` constants:
-
-```javascript
-const GRAVITY = 0.6;        // Gravity strength
-const MOVE_SPEED = 5;       // Player horizontal speed
-const JUMP_POWER = -12;     // Jump force (negative = up)
-const TILE_SIZE = 40;       // Grid size for rendering
-```
-
-Edit `index.html` styles:
-
-```css
-canvas {
-    border: 3px solid #4a9eff;      /* Border color */
-    background: #0a0a0a;            /* Canvas background */
-}
-```
-
-## 📝 Difficulty Breakdown
-
-- **Level 1-2**: Learn basic jumps and movement
-- **Level 3-5**: Introduction to buttons, doors, and moving platforms
-- **Level 6-8**: Combination puzzles requiring precise timing
-- **Level 9-10**: Expert challenges with multiple moving platforms and buttons
-
-## 🔧 Technical Details
-
-- **Game Engine**: Vanilla JavaScript (no frameworks)
-- **Rendering**: HTML5 Canvas 2D
-- **Physics**: Custom collision detection
-- **Audio**: Web Audio API for sound effects
-- **Performance**: ~60 FPS on modern browsers
-
-## 🐛 Known Limitations
-
-- No save/resume (single session only)
-- No mobile touch controls (keyboard/arrows only)
-- Canvas requires focus for keyboard input
-
-## 📈 Future Enhancements
-
-- [ ] Level progression save/load
-- [ ] Custom level sharing
-- [ ] Mobile touch controls
-- [ ] Leaderboard system
-- [ ] Additional level editor UI
-- [ ] Sprite animations
-- [ ] Background music
-
-## 📄 License
-
-Free to use and modify. Inspired by Booty (1984).
-
----
-
-**Made with ❤️ for 8-bit nostalgia**
+* Inspirado en *Booty* (Firebird Software, 1984), de Kevin A. Moughtin. Es un homenaje sin ánimo de lucro: los gráficos, los niveles y el código son originales.
+* Música: *What Shall We Do with the Drunken Sailor* (tradicional, dominio público).
+* Fuente: *Press Start 2P* de CodeMan38, licencia SIL Open Font License (`fonts/OFL.txt`).
