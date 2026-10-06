@@ -1,118 +1,123 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Booty - Platform Puzzle Game</title>
+    <title>BOOTY - Pirate Platform Puzzle</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            font-family: 'Courier New', monospace;
-            background: #1a1a1a;
+            font-family: 'Press Start 2P', monospace;
+            background: #0c0c1d;
             display: flex;
             justify-content: center;
             align-items: center;
             min-height: 100vh;
             color: #fff;
+            overflow: hidden;
         }
 
-        .container {
+        .game-wrapper {
             display: flex;
             flex-direction: column;
             align-items: center;
+            gap: 8px;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            width: 800px;
+            padding: 8px 12px;
+            background: #1a0a2e;
+            border: 2px solid #c9a033;
+            border-bottom: none;
+        }
+
+        .header .title {
+            font-size: 20px;
+            color: #c9a033;
+            text-shadow: 2px 2px #000;
+            letter-spacing: 4px;
+        }
+
+        .header .stats {
+            display: flex;
             gap: 20px;
+            font-size: 10px;
+            margin-left: auto;
+            color: #aaa;
+        }
+
+        .header .stats span {
+            color: #c9a033;
         }
 
         canvas {
-            border: 3px solid #4a9eff;
-            background: #0a0a0a;
+            display: block;
+            border: 2px solid #c9a033;
             image-rendering: pixelated;
             image-rendering: crisp-edges;
         }
 
-        .ui {
+        .footer {
             display: flex;
-            gap: 40px;
-            font-size: 18px;
             align-items: center;
+            justify-content: space-between;
+            width: 800px;
+            padding: 8px 12px;
+            background: #1a0a2e;
+            border: 2px solid #c9a033;
+            border-top: none;
         }
 
-        .level-info {
-            background: #2a2a2a;
-            padding: 10px 20px;
-            border: 2px solid #4a9eff;
+        .footer .level-name {
+            font-size: 10px;
+            color: #7ec8e3;
         }
 
-        .controls {
+        .footer .controls-hint {
+            font-size: 8px;
+            color: #555;
+        }
+
+        .message-overlay {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            color: #c9a033;
+            text-shadow: 2px 2px #000, -1px -1px #000;
+            pointer-events: none;
+            z-index: 10;
             text-align: center;
-            font-size: 14px;
-            color: #888;
-        }
-
-        .controls p {
-            margin: 5px 0;
-        }
-
-        .message {
-            font-size: 20px;
-            color: #4a9eff;
-            text-align: center;
-            min-height: 30px;
-        }
-
-        .stats {
-            display: flex;
-            gap: 20px;
-            font-size: 16px;
-        }
-
-        button {
-            padding: 10px 20px;
-            font-size: 16px;
-            background: #4a9eff;
-            color: #000;
-            border: none;
-            cursor: pointer;
-            font-weight: bold;
-            border-radius: 4px;
-            transition: all 0.2s;
-        }
-
-        button:hover {
-            background: #6ab8ff;
-            transform: scale(1.05);
-        }
-
-        button:active {
-            transform: scale(0.95);
+            line-height: 2;
+            display: none;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1 style="color: #4a9eff;">🎮 BOOTY</h1>
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
-        <div class="ui">
-            <div class="level-info">Level: <span id="levelNum">1</span>/10</div>
+    <div class="game-wrapper">
+        <div class="header">
+            <div class="title">☠ BOOTY</div>
             <div class="stats">
-                <div>Jumps: <span id="jumpCount">0</span></div>
-                <div>Time: <span id="timeCount">0</span>s</div>
+                <div>LVL <span id="levelNum">1</span>/10</div>
+                <div>COINS <span id="coinCount">0</span></div>
+                <div>TIME <span id="timeCount">0</span></div>
             </div>
         </div>
-        <div class="message" id="message"></div>
-        <button id="restartBtn">Restart Level</button>
-        <div class="controls">
-            <p>↑ SPACE / W — Jump</p>
-            <p>← → / A D — Move</p>
-            <p>Reach the exit ⭐ to complete the level</p>
+        <canvas id="gameCanvas" width="800" height="560"></canvas>
+        <div class="footer">
+            <div class="level-name" id="levelName">THE LOWER DECK</div>
+            <div class="controls-hint">WASD/ARROWS MOVE · SPACE JUMP · R RESTART</div>
         </div>
     </div>
-
+    <div class="message-overlay" id="message"></div>
     <script src="game.js"></script>
 </body>
 </html>
