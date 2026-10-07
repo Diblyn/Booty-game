@@ -112,7 +112,7 @@
         barrel: mk(['..nnnn..', '.NNNNNN.', '.llllll.', '.NNNNNN.', '.NNNNNN.', '.llllll.', '.NNNNNN.', '..nnnn..']),
         porthole: mk(['..llll..', '.lCbbbl.', 'lCbbbbbl', 'lbbbbbbl', 'lbbbbbbl', 'lbbbbbBl', '.lbbbBl.', '..llll..']),
         lantern: mk(['...dd...', '...dd...', '..dddd..', '..dYYd..', '..YooY..', '..dYYd..', '..dddd..', '........']),
-        cannon: mk(['........', '........', '........', '.ddddd..', 'ddddddll', 'ddddddd.', '.nNnnNn.', '..nn.nn.']),
+        cannon: mk(['........', '........', '........', '.lllllkk', 'kkkkkkkk', '.rrrrr..', 'rNrrrNr.', '.N...N..'], { k: '#202020', l: '#707070' }),
         flag: mk(['lkkkkkkk', 'lkkWWWkk', 'lkkWkWkk', 'lkkWWWkk', 'lkWkkkWk', 'lkkWkWkk', 'lkWkkkWk', 'l.......']),
         life: mk(['..RR..', '.RRRR.', '.ssss.', 'WWWWWW', '.BBBB.', '.WWWW.', '.b..b.', '.k..k.']),
     };
@@ -214,6 +214,7 @@
                 case 'life': [784, 988, 1175, 1568].forEach((f, i) => tone(f, t + i * 0.06, 0.1, 'triangle', 0.1)); break;
                 case 'gold': [523, 659, 784, 1047, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, t + i * 0.1, 0.18, 'square', 0.08)); break;
                 case 'tick': tone(1500, t, 0.02, 'square', 0.04); break;
+                case 'enter': tone(180, t, 0.22, 'triangle', 0.12, 720); tone(360, t + 0.08, 0.2, 'square', 0.04, 1080); break;
             }
         }
 
@@ -271,6 +272,7 @@
         if (e.code === 'KeyM') { const on = Snd.toggleMusic(); flash(on ? 'MUSIC ON' : 'MUSIC OFF'); }
         if (e.code === 'KeyP' || e.code === 'Escape') press('pause');
         if (e.code === 'KeyR') press('restart');
+        if (e.code === 'Tab' || e.code === 'KeyN') { e.preventDefault(); press('map'); }
         if (e.code === 'KeyC') press('continue');
         if (e.code === 'KeyQ') press('quit');
     });
@@ -279,46 +281,55 @@
 
     document.querySelectorAll('#touch button').forEach(b => {
         const k = b.dataset.k;
-        const on = ev => { ev.preventDefault(); Snd.init(); b.classList.add('on'); if (k === 'jump') press('jump'); else held[k] = true; };
-        const off = ev => { ev.preventDefault(); b.classList.remove('on'); if (k !== 'jump') held[k] = false; };
+        const tap = k === 'jump' || k === 'map' || k === 'pause';
+        const on = ev => { ev.preventDefault(); Snd.init(); b.classList.add('on'); if (tap) press(k); else held[k] = true; };
+        const off = ev => { ev.preventDefault(); b.classList.remove('on'); if (!tap) held[k] = false; };
         b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off);
         b.addEventListener('pointercancel', off); b.addEventListener('pointerleave', off);
     });
     screen.addEventListener('pointerdown', () => { Snd.init(); if (S.mode !== 'play') press('jump'); });
 
     // ---------- game state ----------
+    const TOTAL = LEVELS.reduce((n, d) => n + d.map.join('').split('').filter(c => c === '$' || c === '!').length, 0);
+    const GOLD_TIME = 45 * 60;
     const S = {
         mode: 'title', room: 0, lives: 5, score: 0, booty: 0, held: 0,
-        w: null, p: null, staticLayer: null, staticDirty: true,
-        roomBooty: 0, roomGot: 0, exitOpen: false, gold: false, goldTime: 0,
+        worlds: null, w: null, p: null, entry: null, visited: [],
+        staticLayer: null, staticDirty: true,
+        gold: null, goldTime: 0,
         bombs: [], parts: [], floats: [], touchingKeys: new Set(),
-        snap: null, timer: 0, invuln: 0, shake: 0, deathCause: '', msg: '', msgT: 0,
-        frame: 0, playFrames: 0, nextLife: 30, hi: 0, save: null,
+        snap: null, timer: 0, invuln: 0, shake: 0, deathCause: '', msg: '', msgT: 0, banner: null,
+        frame: 0, playFrames: 0, nextLife: 30, hi: 0, save: null, trans: null, prevUp: false,
     };
-    try { S.save = JSON.parse(localStorage.getItem('booty-save') || 'null'); S.hi = +(localStorage.getItem('booty-hi') || 0); } catch (e) {}
+    try { S.save = JSON.parse(localStorage.getItem('booty-ship-save') || 'null'); S.hi = +(localStorage.getItem('booty-hi') || 0); } catch (e) {}
 
     function flash(m, t) { S.msg = m; S.msgT = t || 120; }
 
     function press(what) {
         switch (S.mode) {
             case 'title':
-                if (what === 'jump') newGame(0);
-                else if (what === 'continue' && S.save) newGame(S.save.room, S.save);
+                if (what === 'jump') newGame();
+                else if (what === 'continue' && S.save) restore(S.save, true);
                 break;
             case 'intro':
-                if (what === 'jump' && S.timer > 20) { S.mode = 'play'; S.timer = 0; }
+                if (what === 'jump' && S.timer > 20) { S.mode = 'play'; S.timer = 0; welcome(); }
                 break;
             case 'play':
                 if (what === 'jump') jumpQueued = true;
                 else if (what === 'pause') S.mode = 'paused';
-                else if (what === 'restart') { restartRoom(); flash('HOLD RESTARTED'); }
+                else if (what === 'map') S.mode = 'map';
+                else if (what === 'restart') killPlayer('restart');
+                break;
+            case 'map':
+                if (what === 'map' || what === 'pause' || what === 'jump') S.mode = 'play';
                 break;
             case 'paused':
                 if (what === 'pause' || what === 'jump') S.mode = 'play';
+                else if (what === 'map') S.mode = 'map';
                 else if (what === 'quit') S.mode = 'title';
                 break;
             case 'gameover':
-                if (what === 'jump' && S.timer > 40) { S.lives = 5; S.score = S.snap.score; S.booty = S.snap.booty; enterRoom(S.room); }
+                if (what === 'jump' && S.timer > 40) restore(S.snap, false);
                 else if (what === 'quit') S.mode = 'title';
                 break;
             case 'win':
@@ -327,34 +338,87 @@
         }
     }
 
-    function newGame(room, save) {
-        S.lives = 5; S.score = save ? save.score : 0; S.booty = save ? save.booty : 0;
-        S.nextLife = (Math.floor(S.booty / 30) + 1) * 30; S.playFrames = 0;
-        enterRoom(room);
+    // ---------- the ship: holds, doors and saves ----------
+    function bootyIn(w) { let n = 0; for (const ch of w.tiles) if (ch === '$' || ch === '!') n++; return n; }
+
+    function tilesForSave(w) {
+        const t = w.tiles.slice();
+        for (const g of w.regrow) t[g.r * E.COLS + g.c] = '-';   // crumbled planks come back
+        return t.join('');
     }
 
-    function loadWorld(room) {
-        const def = LEVELS[room];
-        S.w = E.parseLevel(def);
-        S.p = E.newPlayer(S.w);
-        S.roomBooty = S.w.boot; S.roomGot = 0;
-        S.exitOpen = false; S.gold = false; S.goldTime = 0;
-        S.held = 0; S.bombs = []; S.parts = []; S.floats = []; S.touchingKeys = new Set();
-        S.invuln = 60; S.staticDirty = true;
+    function snapshot() {
+        return {
+            room: S.room, entry: S.entry, score: S.score, booty: S.booty, lives: S.lives, nextLife: S.nextLife,
+            playFrames: S.playFrames, visited: S.visited.slice(), gold: S.gold, goldTime: S.goldTime,
+            worlds: S.worlds.map(w => ({ tiles: tilesForSave(w), consumed: w.consumed, t: w.t })),
+        };
     }
 
-    function enterRoom(room) {
-        S.room = room;
-        S.snap = { score: S.score, booty: S.booty };
-        loadWorld(room);
+    function saveGame() {
+        S.snap = snapshot();
+        S.save = S.snap;
+        try { localStorage.setItem('booty-ship-save', JSON.stringify(S.snap)); } catch (e) {}
+    }
+
+    function setRoom(room, entry) {
+        S.room = room; S.w = S.worlds[room]; S.entry = entry;
+        S.p = E.newPlayer(S.w, entry);
+        S.held = 0; S.bombs = []; S.touchingKeys = new Set();
+        S.invuln = 60; S.staticDirty = true; S.prevUp = true;
+    }
+
+    function newGame() {
+        S.worlds = LEVELS.map(d => E.parseLevel(d));
+        S.lives = 5; S.score = 0; S.booty = 0; S.nextLife = 30; S.playFrames = 0;
+        S.visited = LEVELS.map(() => false); S.gold = null; S.goldTime = 0;
+        S.parts = []; S.floats = []; S.banner = null; S.msgT = 0;
+        setRoom(0, S.worlds[0].start);
+        S.visited[0] = true;
+        saveGame();
         S.mode = 'intro'; S.timer = 0;
-        S.save = { room, score: S.score, booty: S.booty };
-        try { localStorage.setItem('booty-save', JSON.stringify(S.save)); } catch (e) {}
     }
 
-    function restartRoom() {
-        S.score = S.snap.score; S.booty = S.snap.booty;
-        loadWorld(S.room);
+    function restore(snap, fromTitle) {
+        S.worlds = LEVELS.map((d, i) => {
+            const w = E.parseLevel(d), sw = snap.worlds[i];
+            w.tiles = sw.tiles.split(''); w.consumed = sw.consumed || {}; E.setTime(w, sw.t || 0);
+            return w;
+        });
+        S.score = snap.score; S.booty = snap.booty; S.nextLife = snap.nextLife || 30;
+        S.lives = fromTitle ? Math.max(5, snap.lives || 5) : 5;
+        S.playFrames = snap.playFrames || 0; S.visited = snap.visited.slice();
+        S.gold = snap.gold; S.goldTime = snap.gold ? GOLD_TIME : 0;
+        S.parts = []; S.floats = []; S.msgT = 0;
+        setRoom(snap.room, snap.entry);
+        S.snap = snap;
+        S.mode = 'play'; S.timer = 0;
+        S.banner = { title: `HOLD ${snap.room + 1}  ${LEVELS[snap.room].name}`, tip: '', t: 150 };
+    }
+
+    function welcome() {
+        const d = LEVELS[S.room];
+        S.banner = { title: `HOLD ${S.room + 1}  ${d.name}`, tip: d.tip, t: 330 };
+    }
+
+    function goThrough(door) {
+        S.mode = 'trans'; S.timer = 0;
+        S.trans = { to: door.to - 1, from: S.room };
+        Snd.play('enter');
+    }
+
+    function finishTransition() {
+        const { to, from } = S.trans;
+        E.resetKeys(S.w);                                   // keys never leave their hold
+        const dest = S.worlds[to];
+        const arrival = dest.portals.find(d => d.to === from + 1 || d.from === from + 1);
+        setRoom(to, { x: arrival.x, y: arrival.y });
+        const first = !S.visited[to];
+        S.visited[to] = true;
+        const d = LEVELS[to];
+        S.banner = { title: `HOLD ${to + 1}  ${d.name}`, tip: first ? d.tip : '', t: first ? 330 : 120 };
+        if (S.gold && S.gold.room === to) S.banner.tip = 'THE GOLDEN KEY IS IN THIS HOLD!';
+        saveGame();
     }
 
     // ---------- effects ----------
@@ -376,7 +440,7 @@
         if (S.mode !== 'play') return;
         S.p.dead = S.p.dead || cause;
         S.deathCause = cause;
-        S.mode = 'dead'; S.timer = 0; S.shake = 10;
+        S.mode = 'dead'; S.timer = 0; S.shake = cause === 'restart' ? 0 : 10;
         Snd.play('die');
         burst(S.p.x + 4, S.p.y + 8, ['#FFFFFF', '#FF2020', '#FFFF00'], 24, 1.4);
     }
@@ -387,6 +451,7 @@
         for (let i = 0; i < w.tiles.length; i++) if (w.tiles[i] === String(n)) {
             w.tiles[i] = '.'; cx += (i % E.COLS) * T + 4; cy += Math.floor(i / E.COLS) * T + 4; k++;
         }
+        w.consumed[String.fromCharCode(96 + n)] = true;
         if (k) burst(cx / k, cy / k, [KEYCOL[n], '#FFFFFF'], 20, 1);
         S.staticDirty = true;
         S.held = 0;
@@ -394,25 +459,38 @@
         Snd.play('door');
     }
 
+    function spawnGold() {
+        // the golden key appears in this hold, on the treasure spot furthest from you
+        const w = S.w, start = LEVELS[S.room].map;
+        let best = null, bd = -1;
+        for (let r = 0; r < E.ROWS; r++) for (let c = 0; c < E.COLS; c++) {
+            const ch0 = start[r][c];
+            if ((ch0 !== '$' && ch0 !== '!') || E.tileAt(w, c, r) !== '.') continue;
+            const d = Math.abs(c * T - S.p.x) + Math.abs(r * T - S.p.y);
+            if (d > bd) { bd = d; best = { c, r }; }
+        }
+        S.gold = { room: S.room, c: best.c, r: best.r };
+        E.setTile(w, best.c, best.r, 'G');
+        S.goldTime = GOLD_TIME;
+    }
+
     function collect(c, r, ch) {
         const w = S.w;
         E.setTile(w, c, r, '.');
-        S.roomGot++; S.booty++; addScore(50);
+        S.booty++; addScore(50);
         floater(c * T + 4, r * T - 4, '50');
         burst(c * T + 4, r * T + 4, ['#FFFF00', '#FFFFFF'], 8, 0.7);
         Snd.play('booty');
         if (ch === '!') { S.bombs.push({ x: c * T, y: r * T, t: 60 }); flash('BOOBY TRAP! RUN!', 60); }
         if (S.booty >= S.nextLife) { S.lives++; S.nextLife += 30; Snd.play('life'); flash('EXTRA LIFE!'); }
-        if (S.roomGot >= S.roomBooty) {
-            if (LEVELS[S.room].finale) {
-                S.gold = true; S.goldTime = 45 * 60;
-                flash('THE GOLDEN KEY HAS APPEARED!', 200);
-                Snd.play('gold');
-            } else {
-                S.exitOpen = true;
-                flash('ALL BOOTY TAKEN! FIND THE EXIT', 160);
-                Snd.play('open');
-            }
+        if (S.booty >= TOTAL) {
+            spawnGold();
+            S.banner = { title: `ALL ${TOTAL} PIECES FOUND!`, tip: 'THE GOLDEN KEY HAS APPEARED IN THIS HOLD. YOU HAVE 45 SECONDS!', t: 300 };
+            Snd.play('gold');
+        } else if (bootyIn(w) === 0) {
+            addScore(500);
+            flash(`HOLD ${S.room + 1} CLEARED! +500`, 150);
+            Snd.play('clear');
         }
     }
 
@@ -443,8 +521,7 @@
                             if (S.held) flash(`SWAPPED KEY ${S.held} FOR KEY ${n}`, 80); else flash(`GOT KEY ${n}`, 60);
                             S.held = n; addScore(10); Snd.play('key');
                         }
-                    } else if (ch === 'X' && S.exitOpen && S.mode === 'play') roomClear();
-                    else if (ch === 'G' && S.gold && S.mode === 'play') winGame();
+                    } else if (ch === 'G' && S.gold && S.mode === 'play') winGame();
                     break;
                 }
             }
@@ -454,17 +531,11 @@
         if (p.mode === 'ladder' && (held.up || held.down) && p.anim % 10 === 0) Snd.play('climb');
     }
 
-    function roomClear() {
-        S.mode = 'clear'; S.timer = 0;
-        addScore(1000);
-        Snd.play('clear');
-    }
-
     function winGame() {
         S.mode = 'win'; S.timer = 0;
         addScore(5000 + Math.floor(S.goldTime / 60) * 100);
         Snd.play('gold');
-        try { localStorage.removeItem('booty-save'); } catch (e) {}
+        try { localStorage.removeItem('booty-ship-save'); } catch (e) {}
         S.save = null;
     }
 
@@ -475,13 +546,14 @@
         S.floats = S.floats.filter(f => f.life > 0);
         if (S.shake > 0) S.shake--;
         if (S.msgT > 0) S.msgT--;
+        if (S.banner && --S.banner.t <= 0) S.banner = null;
     }
 
     function update() {
         S.frame++;
         S.timer++;
         const m = S.mode;
-        if (m === 'play' || m === 'dead' || m === 'clear') {
+        if (m === 'play' || m === 'dead') {
             E.stepWorld(S.w, S.p);
             E.stepEnemies(S.w);
         }
@@ -489,6 +561,11 @@
             S.playFrames++;
             const inp = { left: held.left, right: held.right, up: held.up, down: held.down, jump: jumpQueued };
             jumpQueued = false;
+            const upEdge = held.up && !S.prevUp;
+            S.prevUp = held.up;
+            const door = upEdge ? E.portalAt(S.w, S.p) : null;
+            if (door && door.to) { goThrough(door); updateFx(); return; }
+            if (door && !door.to && !S.msgT) flash('THIS DOOR ONLY OPENS FROM THE OTHER SIDE', 90);
             const ev = [];
             E.stepPlayer(S.w, S.p, inp, ev);
             handleEvents(ev);
@@ -510,18 +587,19 @@
             if (S.gold && S.mode === 'play') {
                 S.goldTime--;
                 if (S.goldTime % 60 === 0 && S.goldTime <= 10 * 60) Snd.play('tick');
-                if (S.goldTime <= 0) { S.goldTime = 45 * 60; killPlayer('time'); }
+                if (S.goldTime <= 0) { S.goldTime = GOLD_TIME; killPlayer('time'); }
             }
+        } else if (m === 'trans') {
+            if (S.timer === 12) finishTransition();
+            if (S.timer >= 24) { S.mode = 'play'; S.timer = 0; S.trans = null; }
         } else if (m === 'dead') {
             if (S.timer > 80) {
                 S.lives--;
                 if (S.lives <= 0) { S.mode = 'gameover'; S.timer = 0; }
-                else { S.p = E.newPlayer(S.w); S.invuln = 120; S.mode = 'play'; S.bombs = []; }
-            }
-        } else if (m === 'clear') {
-            if (S.timer > 150) {
-                if (S.room + 1 < LEVELS.length) enterRoom(S.room + 1);
-                else winGame();
+                else {
+                    E.resetKeys(S.w); S.held = 0; S.touchingKeys = new Set();
+                    S.p = E.newPlayer(S.w, S.entry); S.invuln = 120; S.mode = 'play'; S.bombs = []; S.prevUp = true;
+                }
             }
         }
         updateFx();
@@ -574,6 +652,26 @@
         else { g.fillStyle = '#3A1A04'; g.fillRect(x + 1, y + 3, 6, 1); g.fillStyle = col; g.fillRect(x + 5, y + 1, 1, 1); g.fillRect(x, y + 7, 8, 1); }
     }
 
+    // doors in the back wall that lead to other holds
+    function drawPortal(d, th) {
+        const g = ctx, x = d.c * T, y = (d.r - 1) * T;
+        g.fillStyle = shade(th.wall, -0.3); g.fillRect(x - 1, y, 10, 16);
+        if (d.to) {
+            g.fillStyle = '#000'; g.fillRect(x, y + 1, 8, 15);
+            g.fillStyle = th.ladder;
+            g.fillRect(x + 1, y, 6, 1); g.fillRect(x - 1, y + 1, 1, 15); g.fillRect(x + 8, y + 1, 1, 15);
+            g.fillRect(x, y + 1, 1, 1); g.fillRect(x + 7, y + 1, 1, 1);
+            if (d.to < 10) digit(x + 3, y + 3, d.to, '#FFFF00');
+            else { digit(x + 1, y + 3, Math.floor(d.to / 10), '#FFFF00'); digit(x + 4, y + 3, d.to % 10, '#FFFF00'); }
+            g.fillStyle = '#505050'; g.fillRect(x + 3, y + 10, 2, 1); g.fillRect(x + 2, y + 11, 4, 1);
+        } else {
+            g.fillStyle = '#5A2A0A'; g.fillRect(x, y + 1, 8, 15);
+            g.fillStyle = '#8B4A1C'; for (let j = 2; j < 16; j += 3) g.fillRect(x, y + j, 8, 1);
+            g.fillStyle = '#FF2020';
+            for (let i = 0; i < 8; i++) { g.fillRect(x + i, y + 4 + i, 1, 1); g.fillRect(x + 7 - i, y + 4 + i, 1, 1); }
+        }
+    }
+
     function buildStatic() {
         if (!S.staticLayer) { S.staticLayer = document.createElement('canvas'); S.staticLayer.width = W; S.staticLayer.height = PLAY_H; }
         const th = LEVELS[S.room].theme, w = S.w;
@@ -598,6 +696,7 @@
                     if (ch >= '1' && ch <= '9') drawDoorTile(x, y, +ch, E.tileAt(w, c, r - 1) !== ch);
             }
         }
+        for (const d of w.portals) drawPortal(d, th);
         ctx = prev;
         S.staticDirty = false;
     }
@@ -631,7 +730,7 @@
             } else if (ch === 'X') {
                 if (E.tileAt(w, c, r - 1) === 'X') continue;
                 drawExit(x, y);
-            } else if (ch === 'G' && S.gold) {
+            } else if (ch === 'G' && S.gold && S.gold.room === S.room) {
                 const glow = 0.5 + Math.sin(S.frame * 0.15) * 0.5;
                 g.fillStyle = `rgba(255,220,0,${0.25 + glow * 0.3})`;
                 g.beginPath(); g.arc(x + 4, y + 4, 9 + glow * 2, 0, Math.PI * 2); g.fill();
@@ -733,26 +832,69 @@
         const g = ctx, th = LEVELS[S.room].theme;
         g.fillStyle = '#000'; g.fillRect(0, PLAY_H, W, H - PLAY_H);
         g.fillStyle = th.ladder; g.fillRect(0, PLAY_H, W, 1);
-        for (let i = 0; i < Math.min(S.lives, 6); i++) g.drawImage(SPR.life, 3 + i * 8, PLAY_H + 3);
-        if (S.lives > 6) txt('+', 52, PLAY_H + 3, '#FFFFFF');
+        for (let i = 0; i < Math.min(S.lives, 5); i++) g.drawImage(SPR.life, 2 + i * 7, PLAY_H + 3);
+        if (S.lives > 5) txt('+', 37, PLAY_H + 3, '#FFFFFF');
         // key slot
-        g.fillStyle = '#202020'; g.fillRect(62, PLAY_H + 2, 22, 10);
-        if (S.held) { g.drawImage(SPR.keys[S.held], 63, PLAY_H + 2); txt(S.held, 74, PLAY_H + 3, KEYCOL[S.held]); }
-        else txt('-', 70, PLAY_H + 3, '#505050');
-        txt('BOOTY', 90, PLAY_H + 3, '#00FFFF');
-        txt(String(S.booty).padStart(3, '0'), 134, PLAY_H + 3, '#FFFFFF');
+        g.fillStyle = '#202020'; g.fillRect(46, PLAY_H + 2, 22, 10);
+        if (S.held) { g.drawImage(SPR.keys[S.held], 47, PLAY_H + 2); txt(S.held, 58, PLAY_H + 3, KEYCOL[S.held]); }
+        else txt('-', 54, PLAY_H + 3, '#505050');
+        txt('BOOTY', 74, PLAY_H + 3, '#00FFFF');
+        txt(`${String(S.booty).padStart(3, '0')}/${TOTAL}`, 116, PLAY_H + 3, '#FFFFFF');
         if (S.gold) {
             const s = Math.ceil(S.goldTime / 60);
-            txt('TIME', 168, PLAY_H + 3, '#FF2020');
-            txt(String(s).padStart(2, '0'), 204, PLAY_H + 3, s <= 10 && Math.floor(S.frame / 15) % 2 ? '#FF2020' : '#FFFF00');
+            txt('TIME', 182, PLAY_H + 3, '#FF2020');
+            txt(String(s).padStart(2, '0'), 218, PLAY_H + 3, s <= 10 && Math.floor(S.frame / 15) % 2 ? '#FF2020' : '#FFFF00');
         } else {
-            txt('LEFT', 168, PLAY_H + 3, '#FF50FF');
-            txt(String(S.roomBooty - S.roomGot).padStart(2, '0'), 204, PLAY_H + 3, S.exitOpen ? '#00FF00' : '#FFFFFF');
+            const left = bootyIn(S.w);
+            txt('HERE', 182, PLAY_H + 3, '#FF50FF');
+            txt(String(left), 218, PLAY_H + 3, left ? '#FFFFFF' : '#00FF00');
         }
-        txt(Snd.musicOn ? '♪' : ' ', 244, PLAY_H + 3, '#505050');
+        txt('TAB', 232, PLAY_H + 3, '#303060');
         const name = `${S.room + 1} ${LEVELS[S.room].name}`;
         txt(name.slice(0, 22), 3, PLAY_H + 14, '#FFFF00');
         txt(String(S.score).padStart(6, '0'), 253, PLAY_H + 14, '#FFFFFF', { align: 'right' });
+    }
+
+    // ship map: 5 holds per deck, 4 decks
+    const MAP_CELL = { w: 46, h: 28, x0: 13, y0: 25, gx: 2, gy: 6 };
+    function cellRect(i) {
+        const c = i % 5, r = Math.floor(i / 5);
+        return [MAP_CELL.x0 + c * (MAP_CELL.w + MAP_CELL.gx), MAP_CELL.y0 + r * (MAP_CELL.h + MAP_CELL.gy), MAP_CELL.w, MAP_CELL.h];
+    }
+    function drawMap() {
+        const g = ctx;
+        g.fillStyle = 'rgba(0,0,20,0.94)'; g.fillRect(0, 0, W, PLAY_H);
+        center('THE SHIP', 6, '#FFFF00');
+        center(`${S.booty} OF ${TOTAL} PIECES FOUND`, 15, '#00FFFF');
+        // door links
+        LEVELS.forEach((d, i) => d.links.forEach(L => {
+            if (!L.to) return;
+            const j = L.to - 1;
+            if (!S.visited[i] && !S.visited[j]) return;
+            const [ax, ay, aw, ah] = cellRect(i), [bx, by, bw, bh] = cellRect(j);
+            const x1 = ax + aw / 2, y1 = ay + ah / 2, x2 = bx + bw / 2, y2 = by + bh / 2;
+            const back = LEVELS[j].links.find(l => l.to === i + 1);
+            g.strokeStyle = back ? '#505080' : '#FF5050'; g.lineWidth = 1;
+            g.beginPath(); g.moveTo(x1 + 0.5, y1 + 0.5); g.lineTo(x2 + 0.5, y2 + 0.5); g.stroke();
+            if (!back) { g.fillStyle = '#FF5050'; g.fillRect(Math.round(x1 * 0.3 + x2 * 0.7) - 1, Math.round(y1 * 0.3 + y2 * 0.7) - 1, 3, 3); }
+        }));
+        LEVELS.forEach((d, i) => {
+            const [x, y, w, h] = cellRect(i);
+            const here = i === S.room, seen = S.visited[i];
+            const left = S.worlds ? bootyIn(S.worlds[i]) : 0;
+            g.fillStyle = seen ? d.theme.bg === '#000000' ? '#101018' : d.theme.bg : '#080808';
+            g.fillRect(x, y, w, h);
+            g.fillStyle = here && Math.floor(S.frame / 10) % 2 ? '#FFFFFF' : seen ? d.theme.floor : '#303030';
+            g.fillRect(x, y, w, 1); g.fillRect(x, y + h - 1, w, 1); g.fillRect(x, y, 1, h); g.fillRect(x + w - 1, y, 1, h);
+            txt(String(i + 1), x + 3, y + 3, seen ? '#FFFFFF' : '#505050');
+            if (seen) {
+                if (left) { g.drawImage(SPR.booty[i % SPR.booty.length], x + w - 20, y + h - 11); txt(String(left), x + w - 10, y + h - 10, '#FFFF00'); }
+                else txt('OK', x + w - 19, y + h - 10, '#00FF00');
+            } else txt('?', x + w - 10, y + h - 10, '#505050');
+            if (S.gold && S.gold.room === i && Math.floor(S.frame / 8) % 2) g.drawImage(SPR.gold, x + 3, y + h - 9);
+            if (here) g.drawImage(SPR.life, x + w - 9, y + 3);
+        });
+        center('TAB / N  BACK TO THE GAME', 158, '#A8A8A8');
     }
 
     function drawGame() {
@@ -762,37 +904,49 @@
         drawRegrow();
         drawLifts();
         drawEnemies();
-        drawPlayer();
+        if (S.mode !== 'trans' || S.timer >= 12) drawPlayer();
         drawFx();
         drawHUD();
-        if (S.msgT > 0 && S.mode === 'play') {
+        if (S.banner && (S.mode === 'play' || S.mode === 'trans')) {
+            const lines = S.banner.tip ? wrap(S.banner.tip, 30) : [];
+            const hgt = 14 + lines.length * 10;
+            const y = S.p.y > 84 ? 6 : PLAY_H - hgt - 6;
+            ctx.fillStyle = 'rgba(0,0,0,0.78)'; ctx.fillRect(0, y - 3, W, hgt + 2);
+            ctx.fillStyle = LEVELS[S.room].theme.floor; ctx.fillRect(0, y - 3, W, 1); ctx.fillRect(0, y + hgt - 2, W, 1);
+            center(S.banner.title, y, '#FFFF00');
+            lines.forEach((l, i) => center(l, y + 12 + i * 10, '#00FF00'));
+        } else if (S.msgT > 0 && S.mode === 'play') {
             const y = S.p.y > 90 ? 20 : 120;
             ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, y - 3, W, 14);
             center(S.msg, y, '#FFFF00');
         }
+        if (S.mode === 'trans') {
+            const k = S.timer < 12 ? S.timer / 12 : (24 - S.timer) / 12;
+            ctx.fillStyle = '#000';
+            const bar = Math.round(k * PLAY_H / 2);
+            ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, PLAY_H - bar, W, bar);
+        }
         if (S.mode === 'dead') {
             const why = { pirate: 'A PIRATE GOT YOU!', rat: 'BITTEN BY A RAT!', parrot: 'THE PARROT GOT YOU!', fall: 'YOU FELL TOO FAR!',
-                abyss: 'OVERBOARD!', boom: 'BOOBY TRAP!', time: 'OUT OF TIME!' }[S.deathCause] || 'OUCH!';
+                abyss: 'OVERBOARD!', boom: 'BOOBY TRAP!', time: 'OUT OF TIME!', restart: 'BACK TO THE DOOR...' }[S.deathCause] || 'OUCH!';
             ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 70, W, 22);
             center(why, 74, '#FF2020'); center(`${S.lives - 1} LIVES LEFT`, 84, '#FFFFFF');
         }
-        if (S.mode === 'clear') {
-            ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(0, 60, W, 40);
-            center('HOLD CLEARED!', 66, '#00FF00', { size: 1 });
-            center('+1000', 80, '#FFFF00');
-        }
+        if (S.mode === 'map') drawMap();
         if (S.mode === 'paused') {
-            ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, PLAY_H);
-            center('PAUSED', 50, '#FFFF00', { size: 2 });
-            center('P  CONTINUE', 84, '#FFFFFF'); center('R  RESTART HOLD', 96, '#FFFFFF');
-            center('M  MUSIC ON/OFF', 108, '#FFFFFF'); center('Q  QUIT TO TITLE', 120, '#FFFFFF');
+            ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, W, PLAY_H);
+            center('PAUSED', 40, '#FFFF00', { size: 2 });
+            center('P  CONTINUE', 74, '#FFFFFF'); center('TAB  SHIP MAP', 86, '#FFFFFF');
+            center('R  BACK TO THE DOOR (-1 LIFE)', 98, '#FFFFFF');
+            center('M  MUSIC ON/OFF', 110, '#FFFFFF'); center('Q  SAVE AND QUIT', 122, '#FFFFFF');
         }
         if (S.mode === 'gameover') {
             ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0, 0, W, PLAY_H);
             center('GAME OVER', 46, '#FF2020', { size: 2 });
-            center(`SCORE ${S.score}`, 80, '#FFFFFF');
-            center('SPACE: TRY THIS HOLD AGAIN', 104, '#FFFF00');
-            center('Q: TITLE SCREEN', 118, '#A8A8A8');
+            center(`SCORE ${S.score}   BOOTY ${S.booty}/${TOTAL}`, 80, '#FFFFFF');
+            center('SPACE: CONTINUE FROM THE', 100, '#FFFF00');
+            center('LAST DOOR WITH 5 LIVES', 110, '#FFFF00');
+            center('Q: TITLE SCREEN', 126, '#A8A8A8');
         }
     }
 
@@ -854,29 +1008,31 @@
         drawSea(118, f);
         const px = ((f * 0.4) % (W + 40)) - 20;
         ctx.drawImage(SPR.parA[0], Math.round(px), 66 + Math.round(Math.sin(f * 0.1) * 3));
-        center('125 TREASURES. 10 HOLDS.', 54, '#00FFFF');
+        center(`${TOTAL} TREASURES. ${LEVELS.length} HOLDS.`, 54, '#00FFFF');
         if (Math.floor(f / 30) % 2) center('PRESS SPACE TO SET SAIL', 132, '#FFFF00');
-        if (S.save && S.save.room > 0) center(`C  CONTINUE FROM HOLD ${S.save.room + 1}`, 144, '#00FF00');
+        if (S.save && S.save.booty > 0) center(`C  CONTINUE (${S.save.booty}/${TOTAL} FOUND)`, 144, '#00FF00');
         center('ARROWS/WASD MOVE + CLIMB', 158, '#A8A8A8');
-        center('SPACE JUMP  P PAUSE  M MUSIC', 168, '#A8A8A8');
+        center('SPACE JUMP  TAB MAP  M MUSIC', 168, '#A8A8A8');
         if (S.hi) center(`HI-SCORE ${String(S.hi).padStart(6, '0')}`, 181, '#FF50FF');
     }
 
     function drawIntro() {
-        const def = LEVELS[S.room], th = def.theme;
-        ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
-        ctx.fillStyle = th.floor; ctx.fillRect(8, 8, W - 16, 2); ctx.fillRect(8, H - 10, W - 16, 2);
-        ctx.fillStyle = th.ladder; ctx.fillRect(8, 12, 2, H - 24); ctx.fillRect(W - 10, 12, 2, H - 24);
-        center(`HOLD ${S.room + 1} OF ${LEVELS.length}`, 22, '#00FFFF');
-        center(def.name, 38, '#FFFF00', { size: 2, shadow: '#D70000' });
-        const n = S.w.boot;
-        center(`${n} PIECES OF BOOTY`, 66, '#FFFFFF');
-        for (let i = 0; i < SPR.booty.length; i++) ctx.drawImage(SPR.booty[i], W / 2 - 27 + i * 9, 78);
-        wrap(def.tip, 28).forEach((line, i) => center(line, 98 + i * 11, '#00FF00'));
-        ctx.drawImage(SPR.life, 100, 150);
-        txt(`x ${S.lives}`, 110, 150, '#FFFFFF');
-        txt(String(S.score).padStart(6, '0'), 150, 150, '#FFFF00');
-        if (S.timer > 20 && Math.floor(S.frame / 25) % 2) center('PRESS SPACE', 170, '#FF50FF');
+        const f = S.frame;
+        ctx.fillStyle = '#000014'; ctx.fillRect(0, 0, W, H);
+        for (const [x, y, k] of STARS) if (y < 40 && (f + x) % 90 > 4) { ctx.fillStyle = k ? '#A8A8A8' : '#FFFFFF'; ctx.fillRect(x, y, 1, 1); }
+        center('THE SHIP', 8, '#FFFF00', { size: 2, shadow: '#D70000' });
+        const lines = [
+            [`${LEVELS.length} HOLDS. ${TOTAL} PIECES OF BOOTY.`, '#FFFFFF'],
+            ['', ''],
+            ['DOORS IN THE BACK WALL LEAD TO', '#00FFFF'], ['OTHER HOLDS: STAND IN FRONT', '#00FFFF'], ['AND PRESS UP.', '#00FFFF'],
+            ['', ''],
+            ['A KEY OPENS THE DOOR WITH ITS', '#00FF00'], ['NUMBER. ONE KEY AT A TIME.', '#00FF00'], ['KEYS NEVER LEAVE THEIR HOLD.', '#00FF00'],
+            ['', ''],
+            ['RED DOORS ONLY OPEN ONE WAY.', '#FF5050'],
+            ['FIND THEM ALL, THEN THE', '#FFFF00'], ['GOLDEN KEY. TAB = SHIP MAP.', '#FFFF00'],
+        ];
+        lines.forEach(([l, c], i) => l && center(l, 34 + i * 10, c));
+        if (S.timer > 20 && Math.floor(f / 25) % 2) center('PRESS SPACE', 176, '#FF50FF');
     }
 
     function drawWin() {
@@ -887,7 +1043,7 @@
         for (const q of S.parts) { ctx.fillStyle = q.col; ctx.fillRect(Math.round(q.x), Math.round(q.y), 1, 1); }
         center('YO HO HO!', 24, '#FFFF00', { size: 2, shadow: '#D70000' });
         center('YOU FOUND THE GOLDEN KEY', 52, '#FFFFFF');
-        center(`BOOTY ${S.booty} / 125`, 72, '#00FFFF');
+        center(`BOOTY ${S.booty} / ${TOTAL}`, 72, '#00FFFF');
         center(`SCORE ${S.score}`, 86, '#FFFF00');
         const secs = Math.floor(S.playFrames / 60);
         center(`TIME AT SEA ${Math.floor(secs / 60)}M ${String(secs % 60).padStart(2, '0')}S`, 100, '#00FF00');
@@ -929,7 +1085,12 @@
 
     // Test hook used by the automated playthrough (harmless for players)
     const API = window.BOOTY = {
-        S, enterRoom, newGame, press, held, LEVELS, manual: false,
+        S, newGame, press, held, LEVELS, manual: false,
+        goto(i, door) {
+            const d = S.worlds[i].portals[door || 0];
+            setRoom(i, S.worlds[i].start && !door ? S.worlds[i].start : { x: d.x, y: d.y });
+            S.visited[i] = true; S.mode = 'play'; S.banner = null;
+        },
         tick(inp) {
             held.left = !!inp.left; held.right = !!inp.right; held.up = !!inp.up; held.down = !!inp.down;
             if (inp.jump) jumpQueued = true;

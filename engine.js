@@ -22,7 +22,7 @@
     const isSolid = ch => ch === '#' || ch === '=' || ch === '-' || (ch >= '1' && ch <= '9');
     const isLadder = ch => ch === 'H' || ch === '+';
     const isTop = ch => isSolid(ch) || ch === '+';
-    const TOUCHABLE = '$!abcdefghiXG';
+    const TOUCHABLE = '$!abcdefghiXGD';
 
     function parseLevel(def, opts) {
         opts = opts || {};
@@ -39,6 +39,7 @@
             start: null, enemies: [], lifts: [],
             crumble: {}, crumbleEnabled: opts.crumble !== false, regrow: [],
             boot: 0, golden: null,
+            portals: [], keyHomes: {}, consumed: {},
         };
 
         for (let r = 0; r < ROWS; r++) {
@@ -51,9 +52,17 @@
                 else if (ch === 'V') { w.enemies.push({ kind: 'parrot', x: c * T, y: r * T, baseY: r * T, w: 8, h: 8, dir: c < 16 ? 1 : -1, spd: 0.7, ph: c * 0.7, anim: 0 }); tiles[i] = '.'; }
                 else if (ch === 'G') { w.golden = { c, r }; }
                 else if (ch === '$' || ch === '!') w.boot++;
+                else if (ch >= 'a' && ch <= 'i') w.keyHomes[ch] = [c, r];
+                else if (ch === 'D' && (r + 1 >= ROWS || tiles[(r + 1) * COLS + c] !== 'D')) {
+                    const link = (def.links || [])[w.portals.length] || {};
+                    w.portals.push({ i: w.portals.length, c, r, to: link.to, from: link.from,
+                                     x: c * T, y: (r + 1) * T - 16 });
+                }
             }
         }
-        if (!w.start) throw new Error(`"${def.name}": no @ start position`);
+        if (def.links && def.links.length !== w.portals.length) {
+            throw new Error(`"${def.name}": ${w.portals.length} doors (D) in the map but ${def.links.length} links`);
+        }
 
         (def.lifts || []).forEach((L, i) => {
             const dx = L.dx || 0, dy = L.dy || 0, spd = L.spd || 0.5;
@@ -83,6 +92,24 @@
             const [x, y] = liftPos(L, t);
             const [px, py] = liftPos(L, t - 1);
             L.x = x; L.y = y; L.px = px; L.py = py; L.mx = x - px; L.my = y - py;
+        }
+    }
+
+    // which back-wall door is the player standing in front of?
+    function portalAt(w, p) {
+        if (p.mode !== 'ground' || !aligned(p.y + 16)) return null;
+        const c = Math.floor((p.x + 4) / T), r = Math.round((p.y + 16) / T) - 1;
+        for (const d of w.portals) if (d.c === c && d.r === r) return d;
+        return null;
+    }
+
+    // keys never leave a hold: put every unused key back where it started
+    function resetKeys(w) {
+        for (let i = 0; i < w.tiles.length; i++) if (w.tiles[i] >= 'a' && w.tiles[i] <= 'i') w.tiles[i] = '.';
+        for (const ch in w.keyHomes) {
+            if (w.consumed[ch]) continue;
+            const [c, r] = w.keyHomes[ch];
+            setTile(w, c, r, ch);
         }
     }
 
@@ -128,9 +155,10 @@
         return -1;
     }
 
-    function newPlayer(w) {
-        return { x: w.start.x, y: w.start.y, vx: 0, vy: 0, mode: 'ground', face: 1, jdir: 0,
-                 lift: -1, peak: w.start.y, dead: null, anim: 0, walking: false };
+    function newPlayer(w, at) {
+        const s = at || w.start || w.portals[0];
+        return { x: s.x, y: s.y, vx: 0, vy: 0, mode: 'ground', face: 1, jdir: 0,
+                 lift: -1, peak: s.y, dead: null, anim: 0, walking: false };
     }
 
     function moveX(w, p, dx, ev) {
@@ -314,7 +342,7 @@
     }
 
     const api = { T, COLS, ROWS, WALK, JUMP_VY, GRAV, LETHAL_FALL, CRUMBLE_TIME, REGROW_TIME,
-        isSolid, isLadder, isTop, parseLevel, setTime, stepWorld, tileAt, setTile,
+        isSolid, isLadder, isTop, parseLevel, setTime, stepWorld, tileAt, setTile, portalAt, resetKeys,
         newPlayer, stepPlayer, stepEnemies, enemyHit, liftPos };
 
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
